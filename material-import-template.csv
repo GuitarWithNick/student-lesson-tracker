@@ -1,0 +1,12 @@
+type,scope,category,student,day,item,given,goal,song
+material,global,Arpeggios,,,7th Arpeggios in G major.sib,,,
+material,global,Chords,,,15 Common Bar Chords.pdf,,,
+material,global,Songs,,,Good Songbook,,,
+material,global,Theory,,,Pentatonic Scale Resources,,,
+material,global,Rhythm,,,Power Rhythm,,,
+material,global,Technique,,,Warm Up Exercises for Guitar,,,
+material,global,TAB and Song Books,,,Chord Wheel 15B&,,
+material,global,Bonus Material,,,Chord Fluency Home Study Course,,,
+material,student,Songs,Ava,Monday,Blackbird,true,,
+goal,student,Technique,Ava,Monday,Increase metronome speed,,Play clean sixteenth notes at 90 bpm,
+song,student,Songs,Ava,Monday,Blackbird,,,Blackbird
