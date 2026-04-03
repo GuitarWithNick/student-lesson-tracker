@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Student Lesson Tracker</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="hero panel">
+        <p class="eyebrow">Studio Organizer</p>
+        <h1>Student Lesson Tracker</h1>
+        <p class="subtitle">
+          Track students, goals, songs, and assigned practice material by day or name.
+        </p>
+        <div class="sync-row">
+          <p id="syncStatus" class="sync-status">
+            Cloud sync: configure sync.config.js to enable shared data.
+          </p>
+          <button id="syncNowBtn" type="button" class="ghost">Sync Now</button>
+        </div>
+      </header>
+
+      <div class="view-tabs panel" role="tablist" aria-label="Workspace sections">
+        <button
+          id="studentsTabBtn"
+          type="button"
+          class="view-tab is-active"
+          data-action="switch-workspace-tab"
+          data-tab="students"
+          aria-selected="true"
+        >
+          Students
+        </button>
+        <button
+          id="adminTabBtn"
+          type="button"
+          class="view-tab"
+          data-action="switch-workspace-tab"
+          data-tab="admin"
+          aria-selected="false"
+        >
+          Admin Tools
+        </button>
+      </div>
+
+      <section
+        id="studentsWorkspaceTab"
+        class="workspace-page workspace-page-active"
+        role="tabpanel"
+        aria-labelledby="studentsTabBtn"
+      >
+        <section class="panel students-panel workspace-panel">
+          <h2 class="board-title">Students</h2>
+          <div class="student-focus-controls">
+            <select id="studentFocusSelect"></select>
+          </div>
+          <div id="studentsBoard" class="board"></div>
+        </section>
+      </section>
+
+      <section
+        id="adminWorkspaceTab"
+        class="workspace-page"
+        role="tabpanel"
+        aria-labelledby="adminTabBtn"
+        hidden
+      >
+        <div class="admin-grid">
+          <section class="panel tool-panel">
+            <h2>Add Student</h2>
+            <form id="addStudentForm" class="inline-form">
+              <label>
+                Name
+                <input type="text" name="studentName" maxlength="80" required />
+              </label>
+              <label>
+                Day
+                <select name="studentDay" required>
+                  <option value="Monday">Monday</option>
+                  <option value="Tuesday">Tuesday</option>
+                  <option value="Wednesday">Wednesday</option>
+                  <option value="Thursday">Thursday</option>
+                </select>
+              </label>
+              <button type="submit">Add Student</button>
+            </form>
+
+            <div class="sort-row">
+              <label for="sortMode">Organize Students</label>
+              <select id="sortMode">
+                <option value="day">By Day (Mon-Thu)</option>
+                <option value="name">By Name</option>
+              </select>
+            </div>
+          </section>
+
+          <section class="panel tool-panel">
+            <h2>System Practice Material</h2>
+            <p class="muted">
+              Add material once here to make it available across all students.
+            </p>
+            <form id="addGlobalMaterialForm" class="inline-form">
+              <label class="wide">
+                Material Name
+                <input type="text" name="materialName" maxlength="120" required />
+              </label>
+              <label>
+                Category
+                <input
+                  type="text"
+                  name="materialCategory"
+                  maxlength="80"
+                  placeholder="e.g. Songs"
+                  list="materialCategoryOptions"
+                />
+              </label>
+              <button type="submit">Add To System</button>
+            </form>
+            <div class="category-preset-row">
+              <span class="muted">Quick categories</span>
+              <div id="categoryPresetButtons" class="chip-row"></div>
+            </div>
+            <div id="techniqueSubcategoryRow" class="category-preset-row subcategory-row is-hidden">
+              <span class="muted">Technique subcategories</span>
+              <div id="techniqueSubcategoryButtons" class="chip-row"></div>
+            </div>
+            <div id="bassSubcategoryRow" class="category-preset-row subcategory-row is-hidden">
+              <span class="muted">Bass subcategories</span>
+              <div id="bassSubcategoryButtons" class="chip-row"></div>
+            </div>
+            <ul id="globalMaterialList" class="mini-list"></ul>
+            <details class="system-options">
+              <summary>System Options</summary>
+              <p class="muted">
+                Destructive actions are grouped here to avoid accidental clicks.
+              </p>
+              <div class="system-options-row">
+                <button id="moveUncategorizedToSongsBtn" type="button" class="ghost">
+                  Move Uncategorized to Songs
+                </button>
+                <button id="moveSelectedCategoryToSongsBtn" type="button" class="ghost">
+                  Move Selected Category to Songs
+                </button>
+              </div>
+              <div class="danger-row">
+                <button id="deleteSelectedCategoryBtn" type="button" class="danger">
+                  Delete Selected Category
+                </button>
+                <button id="clearGlobalMaterialsBtn" type="button" class="danger">
+                  Delete All System Material
+                </button>
+                <button id="clearAllStudentMaterialBtn" type="button" class="danger">
+                  Clear All Students' Material
+                </button>
+              </div>
+            </details>
+          </section>
+
+          <section class="panel tool-panel">
+            <h2>Import Spreadsheet</h2>
+            <p class="muted">
+              Upload a CSV spreadsheet to bulk add material, goals, songs, and students.
+              Material rows with a blank category will be placed in Songs.
+            </p>
+            <div class="import-row">
+              <input
+                id="materialSpreadsheetInput"
+                type="file"
+                accept=".csv,.tsv,text/csv,text/tab-separated-values"
+              />
+              <button id="importSpreadsheetBtn" type="button">Import Spreadsheet</button>
+            </div>
+            <p class="import-note">
+              Need a starter file?
+              <a class="template-link" href="material-import-template.csv" download>
+                Download import template
+              </a>
+              or
+              <a class="template-link" href="lesson-inventory-from-sheet-example.csv" download>
+                download category example
+              </a>
+            </p>
+            <p id="importStatus" class="import-status"></p>
+          </section>
+
+          <section class="panel tool-panel">
+            <h2>Sync Material Folder</h2>
+            <p class="muted">
+              Choose a local folder to add its files into System Practice Material. This version adds
+              new material and skips duplicates. It does not remove tracker items if files disappear
+              from disk.
+            </p>
+            <div class="import-row">
+              <input
+                id="materialFolderInput"
+                type="file"
+                webkitdirectory
+                directory
+                multiple
+              />
+              <button id="syncMaterialFolderBtn" type="button">Sync Selected Folder</button>
+            </div>
+            <p class="import-note">
+              Best results: choose a parent folder that contains category folders like
+              <code>Songs</code>, <code>Riffs</code>, <code>Technique</code>, or <code>Bass</code>.
+              Nested folders under <code>Songs</code> are ignored cleanly, so
+              <code>Songs/Artist/Album/file.pdf</code> still imports into <code>Songs</code>. For
+              nested groups like <code>Bass / Scales</code>, keep <code>Bass</code> somewhere in the
+              selected path so the app can map it correctly.
+            </p>
+            <p id="folderSyncStatus" class="import-status"></p>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <datalist id="materialCategoryOptions"></datalist>
+    <script src="sync.config.js"></script>
+    <script src="songs-starter-materials.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
