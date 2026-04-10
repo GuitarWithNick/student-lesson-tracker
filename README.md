@@ -1,0 +1,102 @@
+# Student Lesson Tracker (Desktop Web)
+
+Standalone browser app for tracking:
+
+1. Students
+2. Each student's goals
+3. Songs learned
+4. Practice material assigned
+5. Organization by day (Monday-Thursday) or by name
+6. Checkboxes for material that has been given
+7. Custom material per student and system-wide material controls
+
+## Run
+
+Open `index.html` in a browser.
+
+No build step is required.
+
+## Official workflow
+
+Use the Netlify-hosted URL as the main version of the app on all of your computers.
+
+- Use the hosted Netlify URL for normal day-to-day use.
+- Avoid opening older copied local versions unless you are intentionally testing something.
+- Student data syncs through Supabase.
+- App updates sync through GitHub + Netlify when new code is pushed to `main`.
+
+## Publishing updates
+
+This folder is intended to be the local working copy for:
+
+- GitHub repo: `GuitarWithNick/student-lesson-tracker`
+- Netlify site: Student Lesson Tracker
+
+Recommended update flow:
+
+1. Make changes in this folder.
+2. Commit the changes in this folder's git repo.
+3. Push to `main`.
+4. Netlify deploys the new version automatically.
+5. Refresh the hosted app URL on your other computers.
+
+This repo includes `netlify.toml`, so Netlify should publish the repo root automatically.
+
+## Local data
+
+Local cache key:
+
+- `student-practice-tracker-v1`
+
+## Spreadsheet Import
+
+Use the **Import Spreadsheet** panel in the app.
+
+- Supported files: `.csv` and `.tsv`
+- Template file: `material-import-template.csv`
+- Example from your inventory categories: `lesson-inventory-from-sheet-example.csv`
+- If your file comes from Apple Numbers, export it first:
+  `File > Export To > CSV`
+
+Supported columns:
+
+- `type` = `material`, `goal`, or `song`
+- `scope` = `global` or `student` (used for `material` rows)
+- `category` = grouping label (for example `Songs`, `Arpeggios`, `Chords`, `Theory`)
+- `student` = student name (required for `goal`, `song`, and student material)
+- `day` = Monday/Tuesday/Wednesday/Thursday (used when creating new students)
+- `item` = material/goal/song text
+- `given` = `true`/`false` (optional check mark status)
+- `goal` and `song` optional helper columns if you prefer separate fields
+
+## Cloud sync (shared with Android app)
+
+This app can sync with the Android app through Supabase so both devices share the same data.
+
+1. Create a Supabase project.
+2. Run SQL from:
+   - `../student-tracker-sync/supabase-setup.sql`
+3. Copy your Supabase project URL and anon key.
+4. Update this file:
+   - `sync.config.js`
+5. Use the exact same values in Android file:
+   - `../student-tracker-android/sync.config.js`
+
+Both files must share the same:
+
+- `supabaseUrl`
+- `supabaseAnonKey`
+- `studioId`
+
+After that, both apps auto-sync and also provide a **Sync Now** button.
+
+## Security note
+
+Right now this setup uses a publishable Supabase key in the client app, which is normal, but the
+underlying database rules should be tightened if you want stronger protection.
+
+Recommended next hardening steps:
+
+1. Make the GitHub repo private if you do not want the project files publicly visible.
+2. Re-enable Supabase Row Level Security and add a policy for your tracker data.
+3. Keep using the hosted Netlify URL as the single shared version of the app.

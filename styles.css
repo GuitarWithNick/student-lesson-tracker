@@ -112,6 +112,30 @@ h4 {
   color: var(--muted);
 }
 
+.app-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.app-meta-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.28rem 0.62rem;
+  background: #e3f3ed;
+  color: #175746;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.app-meta-pill-soft {
+  background: #eff5f3;
+  color: #4a645d;
+}
+
 .sync-row {
   margin-top: 0.4rem;
   padding: 0.8rem 0.9rem;
@@ -864,6 +888,12 @@ button:focus-visible {
 .summary-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  align-content: start;
+}
+
+.summary-stack {
+  display: grid;
   gap: 0.75rem;
   align-content: start;
 }

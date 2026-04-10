@@ -1,4 +1,5 @@
 const STORAGE_KEY = "student-practice-tracker-v1";
+const APP_VERSION = "2026.04.09.1";
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday"];
 const PUSH_DEBOUNCE_MS = 500;
 const POLL_INTERVAL_MS = 15000;
@@ -24,7 +25,8 @@ const IMPORT_HEADER_ALIASES = {
   day: ["day", "weekday", "lesson day"],
   given: ["given", "assigned", "checked", "completed", "done", "is given"],
   goal: ["goal", "student goal"],
-  song: ["song", "song learned", "learned song"]
+  song: ["song", "song learned", "learned song"],
+  riff: ["riff", "riffs learned", "learned riff", "learned riffs"]
 };
 const UNCATEGORIZED_LABEL = "Uncategorized";
 const SONGS_CATEGORY = "songs";
@@ -562,6 +564,8 @@ const dom = {
   folderSyncStatus: document.getElementById("folderSyncStatus"),
   syncStatus: document.getElementById("syncStatus"),
   syncNowBtn: document.getElementById("syncNowBtn"),
+  appVersion: document.getElementById("appVersion"),
+  appRuntime: document.getElementById("appRuntime"),
   studentFocusSelect: document.getElementById("studentFocusSelect"),
   materialCategoryOptions: document.getElementById("materialCategoryOptions"),
   categoryPresetButtons: document.getElementById("categoryPresetButtons"),
@@ -716,6 +720,7 @@ function sanitizeStudents(value, validGlobalIds) {
     const day = DAYS.includes(entry.day) ? entry.day : DAYS[0];
     const goals = sanitizeStudentGoals(entry);
     const songs = sanitizeSimpleList(entry.songs, "song");
+    const riffs = sanitizeSimpleList(entry.riffs, "riff");
     const notes = sanitizeNotesText(entry.notes ?? entry.note);
     const archived = Boolean(entry.archived);
     const archivedAt = sanitizeArchivedAt(entry.archivedAt ?? entry.archived_at);
@@ -728,6 +733,7 @@ function sanitizeStudents(value, validGlobalIds) {
       day,
       goals,
       songs,
+      riffs,
       notes,
       archived,
       archivedAt,
@@ -1216,6 +1222,7 @@ function maybeApplyStarterStudents({ students, migrationKey }) {
       day: DAYS.includes(entry?.day) ? entry.day : DAYS[0],
       goals: [],
       songs: [],
+      riffs: [],
       notes: "",
       archived: false,
       archivedAt: "",
@@ -1264,11 +1271,24 @@ function persistStateOnly() {
 }
 
 function render() {
+  renderAppMeta();
   renderWorkspaceTabs();
   renderCategoryHelpers();
   renderGlobalMaterialList();
   renderStudentsBoard();
   renderSyncStatus();
+}
+
+function renderAppMeta() {
+  if (dom.appVersion instanceof HTMLElement) {
+    dom.appVersion.textContent = `Build ${APP_VERSION}`;
+  }
+
+  if (dom.appRuntime instanceof HTMLElement) {
+    const isHosted =
+      window.location.protocol.startsWith("http") && window.location.hostname.length > 0;
+    dom.appRuntime.textContent = isHosted ? "Hosted Web App" : "Local File";
+  }
 }
 
 function renderWorkspaceTabs() {
@@ -1980,6 +2000,21 @@ function renderStudentCard(student, focusedView = false) {
         </li>
       `).join("")
     : `<li class="empty">No songs logged.</li>`;
+  const riffItems = student.riffs.length
+    ? student.riffs.map((riff) => `
+        <li class="mini-row">
+          <span>${escapeHtml(riff.text)}</span>
+          <div class="actions mini-row-actions">
+            <button type="button" class="ghost" data-action="edit-riff" data-student-id="${student.id}" data-riff-id="${riff.id}">
+              Edit
+            </button>
+            <button type="button" class="danger" data-action="delete-riff" data-student-id="${student.id}" data-riff-id="${riff.id}">
+              Remove
+            </button>
+          </div>
+        </li>
+      `).join("")
+    : `<li class="empty">No riffs logged.</li>`;
 
   const materialDisplayGroups = state.globalMaterials.length
     ? groupMaterialsForDisplay(state.globalMaterials)
@@ -2057,6 +2092,16 @@ function renderStudentCard(student, focusedView = false) {
       </form>
     </section>
   `;
+  const riffsSection = `
+    <section class="sub-card compact-card">
+      <h4>Riffs Learned</h4>
+      <ul class="mini-list">${riffItems}</ul>
+      <form class="small-form" data-action="add-riff" data-student-id="${student.id}">
+        <input type="text" name="riffText" maxlength="120" placeholder="Add riff..." required />
+        <button type="submit">Add</button>
+      </form>
+    </section>
+  `;
   const notesSection = `
     <section class="sub-card notes-card">
       <div class="section-head">
@@ -2102,7 +2147,10 @@ function renderStudentCard(student, focusedView = false) {
     ? `
       <div class="summary-row">
         ${goalsSection}
-        ${songsSection}
+        <div class="summary-stack">
+          ${songsSection}
+          ${riffsSection}
+        </div>
       </div>
       ${notesSection}
       ${materialSection}
@@ -2110,6 +2158,7 @@ function renderStudentCard(student, focusedView = false) {
     : `
       ${goalsSection}
       ${songsSection}
+      ${riffsSection}
       ${notesSection}
       ${materialSection}
     `;
@@ -2246,6 +2295,24 @@ function handleSubmit(event) {
     }
 
     student.songs.push({ id: uid("song"), text: songText });
+    form.reset();
+    persistAndRender();
+    return;
+  }
+
+  if (action === "add-riff") {
+    event.preventDefault();
+    const riffText = normalizeText(new FormData(form).get("riffText"));
+    if (!riffText) {
+      return;
+    }
+
+    if (student.riffs.some((riff) => riff.text.toLowerCase() === riffText.toLowerCase())) {
+      alert("That riff is already listed for this student.");
+      return;
+    }
+
+    student.riffs.push({ id: uid("riff"), text: riffText });
     form.reset();
     persistAndRender();
     return;
@@ -2687,6 +2754,16 @@ function handleClick(event) {
     return;
   }
 
+  if (action === "delete-riff") {
+    const riffId = actionElement.dataset.riffId;
+    if (!riffId) {
+      return;
+    }
+    student.riffs = student.riffs.filter((riff) => riff.id !== riffId);
+    persistAndRender();
+    return;
+  }
+
   if (action === "edit-song") {
     const songId = actionElement.dataset.songId;
     if (!songId) {
@@ -2714,6 +2791,37 @@ function handleClick(event) {
     }
 
     song.text = nextSongText;
+    persistAndRender();
+    return;
+  }
+
+  if (action === "edit-riff") {
+    const riffId = actionElement.dataset.riffId;
+    if (!riffId) {
+      return;
+    }
+
+    const riff = student.riffs.find((entry) => entry.id === riffId);
+    if (!riff) {
+      return;
+    }
+
+    const nextRiffText = normalizeText(prompt("Edit riff learned", riff.text) ?? "");
+    if (!nextRiffText || nextRiffText === riff.text) {
+      return;
+    }
+
+    if (
+      student.riffs.some(
+        (entry) =>
+          entry.id !== riff.id && entry.text.toLowerCase() === nextRiffText.toLowerCase()
+      )
+    ) {
+      alert("That riff is already listed for this student.");
+      return;
+    }
+
+    riff.text = nextRiffText;
     persistAndRender();
     return;
   }
@@ -3422,10 +3530,10 @@ function parseSpreadsheetRows(rawText) {
   const headerRow = rows[0];
   const headers = headerRow.map((value) => canonicalHeaderKey(value));
   const hasImportableColumn =
-    headers.includes("item") || headers.includes("goal") || headers.includes("song");
+    headers.includes("item") || headers.includes("goal") || headers.includes("song") || headers.includes("riff");
   if (!hasImportableColumn) {
     throw new Error(
-      "no importable columns found. Include at least one of: item/material, goal, or song."
+      "no importable columns found. Include at least one of: item/material, goal, song, or riff."
     );
   }
 
@@ -3558,11 +3666,17 @@ function inferEntryType(fields) {
   if (explicitType.includes("song")) {
     return "song";
   }
+  if (explicitType.includes("riff")) {
+    return "riff";
+  }
   if (normalizeText(fields.goal)) {
     return "goal";
   }
   if (normalizeText(fields.song)) {
     return "song";
+  }
+  if (normalizeText(fields.riff)) {
+    return "riff";
   }
   return "material";
 }
@@ -3660,6 +3774,7 @@ function applyImportedRows(rows) {
     customMaterialsAdded: 0,
     goalsAdded: 0,
     songsAdded: 0,
+    riffsAdded: 0,
     assignmentsUpdated: 0,
     duplicatesSkipped: 0,
     skippedInvalid: 0,
@@ -3736,6 +3851,31 @@ function applyImportedRows(rows) {
       return;
     }
 
+    if (entryType === "riff") {
+      const riffLabel = normalizeText(fields.riff || fields.item);
+      if (!riffLabel) {
+        result.skippedInvalid += 1;
+        return;
+      }
+      if (!studentName) {
+        result.skippedMissingStudent += 1;
+        return;
+      }
+
+      const student = ensureImportedStudent(studentName, dayHint, result);
+      const exists = student.riffs.some(
+        (riff) => riff.text.toLowerCase() === riffLabel.toLowerCase()
+      );
+      if (exists) {
+        result.duplicatesSkipped += 1;
+        return;
+      }
+      student.riffs.push({ id: uid("riff"), text: riffLabel });
+      result.riffsAdded += 1;
+      result.anyChanges = true;
+      return;
+    }
+
     const materialLabel = normalizeText(fields.item || fields.material || fields.title);
     if (!materialLabel) {
       result.skippedInvalid += 1;
@@ -3805,6 +3945,7 @@ function ensureImportedStudent(studentName, dayHint, result) {
     day: dayHint ?? DAYS[0],
     goals: [],
     songs: [],
+    riffs: [],
     notes: "",
     archived: false,
     archivedAt: "",
@@ -3980,6 +4121,7 @@ function buildImportSummary(result) {
     `Custom material added: ${result.customMaterialsAdded}`,
     `Goals added: ${result.goalsAdded}`,
     `Songs added: ${result.songsAdded}`,
+    `Riffs added: ${result.riffsAdded}`,
     `Check marks/status updated: ${result.assignmentsUpdated}`
   ];
 
@@ -4085,6 +4227,30 @@ function mergeGoalsPreservingMet(localGoals, incomingGoals) {
   return { goals: mergedGoals, changed };
 }
 
+function mergeSimpleTextEntries(localEntries, incomingEntries, prefix) {
+  const mergedEntries = [...incomingEntries];
+  const seen = new Set(
+    incomingEntries.map((entry) => normalizeText(entry.text).toLowerCase()).filter(Boolean)
+  );
+  let changed = false;
+
+  localEntries.forEach((entry) => {
+    const text = normalizeText(entry.text);
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    mergedEntries.push({
+      id: typeof entry.id === "string" ? entry.id : uid(prefix),
+      text
+    });
+    changed = true;
+  });
+
+  return { entries: mergedEntries, changed };
+}
+
 function mergeStatePreservingLocalStudentFields(localState, incomingState) {
   const localStudentsByKey = buildStudentLookup(localState.students);
   let changed = false;
@@ -4104,6 +4270,24 @@ function mergeStatePreservingLocalStudentFields(localState, incomingState) {
       nextStudent = {
         ...nextStudent,
         notes: localStudent.notes
+      };
+      changed = true;
+    }
+
+    const mergedSongResult = mergeSimpleTextEntries(localStudent.songs, incomingStudent.songs, "song");
+    if (mergedSongResult.changed) {
+      nextStudent = {
+        ...nextStudent,
+        songs: mergedSongResult.entries
+      };
+      changed = true;
+    }
+
+    const mergedRiffResult = mergeSimpleTextEntries(localStudent.riffs, incomingStudent.riffs, "riff");
+    if (mergedRiffResult.changed) {
+      nextStudent = {
+        ...nextStudent,
+        riffs: mergedRiffResult.entries
       };
       changed = true;
     }
