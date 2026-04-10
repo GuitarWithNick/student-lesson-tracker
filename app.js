@@ -1,5 +1,5 @@
 const STORAGE_KEY = "student-practice-tracker-v1";
-const APP_VERSION = "2026.04.10.2";
+const APP_VERSION = "2026.04.10.4";
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday"];
 const PUSH_DEBOUNCE_MS = 500;
 const POLL_INTERVAL_MS = 15000;
@@ -618,7 +618,7 @@ function defaultState() {
 function loadLocalEnvelope() {
   const fallback = {
     data: defaultState(),
-    updatedAt: new Date().toISOString()
+    updatedAt: ""
   };
 
   try {
@@ -4332,8 +4332,21 @@ function isRemoteNewer(remoteTimestamp) {
   return timestampMs(remoteTimestamp) > timestampMs(stateUpdatedAt);
 }
 
+function hasMeaningfulDataInState(candidateState) {
+  if (!candidateState || typeof candidateState !== "object") {
+    return false;
+  }
+
+  const students = Array.isArray(candidateState.students) ? candidateState.students : [];
+  const globalMaterials = Array.isArray(candidateState.globalMaterials)
+    ? candidateState.globalMaterials
+    : [];
+
+  return students.length > 0 || globalMaterials.length > 0;
+}
+
 function hasMeaningfulData() {
-  return state.students.length > 0 || state.globalMaterials.length > 0;
+  return hasMeaningfulDataInState(state);
 }
 
 function buildSyncHeaders(includeContentType = false) {
@@ -4413,6 +4426,14 @@ async function pullRemoteAndMerge({ forcePushIfMissing = false, manual = false, 
     }
 
     if (isRemoteNewer(remote.updatedAt)) {
+      if (!hasMeaningfulDataInState(remote.data) && hasMeaningfulData()) {
+        const remoteUpdatedAt = await upsertRemoteEnvelope(state, new Date().toISOString());
+        stateUpdatedAt = normalizeTimestamp(remoteUpdatedAt);
+        persistLocalEnvelope();
+        syncStatus = `Cloud sync: restored local data after empty cloud overwrite (${formatSyncTime(stateUpdatedAt)}).`;
+        return;
+      }
+
       const mergedRemote = mergeStatePreservingLocalStudentFields(state, remote.data);
       state = mergedRemote.state;
 
@@ -4434,7 +4455,7 @@ async function pullRemoteAndMerge({ forcePushIfMissing = false, manual = false, 
       return;
     }
 
-    if (forcePushIfMissing && timestampMs(stateUpdatedAt) > timestampMs(remote.updatedAt)) {
+    if (forcePushIfMissing && hasMeaningfulData() && timestampMs(stateUpdatedAt) > timestampMs(remote.updatedAt)) {
       const remoteUpdatedAt = await upsertRemoteEnvelope(state, stateUpdatedAt);
       stateUpdatedAt = normalizeTimestamp(remoteUpdatedAt);
       persistLocalEnvelope();
