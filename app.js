@@ -1,5 +1,5 @@
 const STORAGE_KEY = "student-practice-tracker-v1";
-const APP_VERSION = "2026.04.10.1";
+const APP_VERSION = "2026.04.10.2";
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday"];
 const PUSH_DEBOUNCE_MS = 500;
 const POLL_INTERVAL_MS = 15000;

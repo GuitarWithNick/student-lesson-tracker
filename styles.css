@@ -635,11 +635,11 @@ button:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: 0.55rem;
-  border: 1px solid #e2ece9;
+  border: 1px solid #cfdcd7;
   border-radius: 12px;
   padding: 0.58rem 0.68rem;
-  background: linear-gradient(180deg, #ffffff, #f8fcfb);
-  box-shadow: 0 3px 10px rgba(22, 52, 45, 0.04);
+  background: #ffffff;
+  box-shadow: none;
 }
 
 .mini-row span {
