@@ -1,8 +1,12 @@
 const STORAGE_KEY = "student-practice-tracker-v1";
-const APP_VERSION = "2026.04.10.4";
+const APP_VERSION = "2026.04.10.5";
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday"];
 const PUSH_DEBOUNCE_MS = 500;
 const POLL_INTERVAL_MS = 15000;
+const BACKUP_DB_NAME = "student-lesson-tracker-backups";
+const BACKUP_DB_VERSION = 1;
+const BACKUP_STORE_NAME = "snapshots";
+const MAX_AUTO_BACKUP_SNAPSHOTS = 8;
 const LOCAL_ONLY_SYNC_STATUS = "Cloud sync: configure sync.config.js to enable shared data.";
 const IMPORT_HEADER_ALIASES = {
   item: [
@@ -544,6 +548,9 @@ let selectedBassSubcategory = "";
 let expandedStudentMaterialCategories = {};
 let studentMaterialSearchTerms = {};
 let activeWorkspaceTab = "students";
+let syncSafetyNotice = null;
+let backupSummary = "Automatic backup snapshots are stored locally in this browser.";
+let backupDbPromise = null;
 
 const dom = {
   addStudentForm: document.getElementById("addStudentForm"),
@@ -562,8 +569,15 @@ const dom = {
   materialFolderInput: document.getElementById("materialFolderInput"),
   syncMaterialFolderBtn: document.getElementById("syncMaterialFolderBtn"),
   folderSyncStatus: document.getElementById("folderSyncStatus"),
+  exportBackupBtn: document.getElementById("exportBackupBtn"),
+  downloadLatestAutoBackupBtn: document.getElementById("downloadLatestAutoBackupBtn"),
+  backupImportInput: document.getElementById("backupImportInput"),
+  importBackupBtn: document.getElementById("importBackupBtn"),
+  backupStatus: document.getElementById("backupStatus"),
+  backupSummary: document.getElementById("backupSummary"),
   syncStatus: document.getElementById("syncStatus"),
   syncNowBtn: document.getElementById("syncNowBtn"),
+  syncSafetyBanner: document.getElementById("syncSafetyBanner"),
   appVersion: document.getElementById("appVersion"),
   appRuntime: document.getElementById("appRuntime"),
   studentFocusSelect: document.getElementById("studentFocusSelect"),
@@ -596,6 +610,7 @@ function bootstrap() {
   }
 
   render();
+  void refreshBackupSummary();
 
   if (syncConfigured) {
     syncStatus = "Cloud sync: connecting...";
@@ -655,6 +670,201 @@ function persistLocalEnvelope() {
     data: state
   };
   localStorage.setItem(STORAGE_KEY, JSON.stringify(envelope));
+}
+
+function requestToPromise(request) {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("Backup request failed."));
+  });
+}
+
+function waitForTransaction(transaction) {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () =>
+      reject(transaction.error ?? new Error("Backup transaction failed."));
+    transaction.onabort = () =>
+      reject(transaction.error ?? new Error("Backup transaction was aborted."));
+  });
+}
+
+function openBackupDatabase() {
+  if (!("indexedDB" in window)) {
+    return Promise.reject(new Error("This browser does not support automatic backup snapshots."));
+  }
+
+  if (!backupDbPromise) {
+    backupDbPromise = new Promise((resolve, reject) => {
+      const request = window.indexedDB.open(BACKUP_DB_NAME, BACKUP_DB_VERSION);
+
+      request.onupgradeneeded = () => {
+        const database = request.result;
+        if (!database.objectStoreNames.contains(BACKUP_STORE_NAME)) {
+          database.createObjectStore(BACKUP_STORE_NAME, { keyPath: "id" });
+        }
+      };
+
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () =>
+        reject(request.error ?? new Error("Could not open automatic backup storage."));
+    });
+  }
+
+  return backupDbPromise;
+}
+
+function buildBackupRecord({ envelope, source, reason = "", createdAt = new Date().toISOString() }) {
+  return {
+    kind: "student-lesson-tracker-backup",
+    appVersion: APP_VERSION,
+    source,
+    reason,
+    exportedAt: createdAt,
+    envelope: {
+      updatedAt: normalizeTimestamp(envelope.updatedAt ?? createdAt),
+      data: sanitizeState(envelope.data)
+    }
+  };
+}
+
+function formatBackupTimestamp(value) {
+  const ms = timestampMs(value);
+  if (!ms) {
+    return "Unknown time";
+  }
+
+  return new Date(ms).toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+}
+
+function formatBackupFilenameTimestamp(value) {
+  const ms = timestampMs(value) || Date.now();
+  return new Date(ms).toISOString().replace(/[:.]/g, "-");
+}
+
+function downloadBackupRecord(record, filenamePrefix) {
+  const safePrefix = normalizeText(filenamePrefix).toLowerCase().replace(/[^a-z0-9]+/g, "-") || "backup";
+  const downloadName = `${safePrefix}-${formatBackupFilenameTimestamp(record.exportedAt)}.json`;
+  const backupBlob = new Blob([JSON.stringify(record, null, 2)], {
+    type: "application/json"
+  });
+  const backupUrl = URL.createObjectURL(backupBlob);
+  const link = document.createElement("a");
+  link.href = backupUrl;
+  link.download = downloadName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(backupUrl), 0);
+}
+
+async function loadAllAutoBackupSnapshots() {
+  const database = await openBackupDatabase();
+  const transaction = database.transaction(BACKUP_STORE_NAME, "readonly");
+  const store = transaction.objectStore(BACKUP_STORE_NAME);
+  const snapshots = await requestToPromise(store.getAll());
+  await waitForTransaction(transaction);
+
+  return Array.isArray(snapshots)
+    ? snapshots.sort((left, right) => timestampMs(right.createdAt) - timestampMs(left.createdAt))
+    : [];
+}
+
+async function refreshBackupSummary() {
+  try {
+    const snapshots = await loadAllAutoBackupSnapshots();
+    if (!snapshots.length) {
+      backupSummary = "Automatic backup snapshots will appear here after the next cloud save.";
+    } else {
+      backupSummary =
+        `Automatic snapshots on this browser: ${snapshots.length}. ` +
+        `Latest ${formatBackupTimestamp(snapshots[0].createdAt)}.`;
+    }
+  } catch (error) {
+    backupSummary =
+      error instanceof Error ? error.message : "Automatic backup summary is unavailable in this browser.";
+  }
+
+  renderBackupSummary();
+}
+
+async function saveAutoBackupSnapshot(reason, nextState, nextUpdatedAt) {
+  try {
+    const database = await openBackupDatabase();
+    const transaction = database.transaction(BACKUP_STORE_NAME, "readwrite");
+    const store = transaction.objectStore(BACKUP_STORE_NAME);
+    const createdAt = new Date().toISOString();
+    const snapshot = buildBackupRecord({
+      envelope: {
+        updatedAt: nextUpdatedAt,
+        data: nextState
+      },
+      source: "auto-snapshot",
+      reason,
+      createdAt
+    });
+    snapshot.id = `snapshot-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    snapshot.createdAt = createdAt;
+
+    store.put(snapshot);
+    const allSnapshots = await requestToPromise(store.getAll());
+
+    if (Array.isArray(allSnapshots)) {
+      const staleSnapshots = [...allSnapshots]
+        .sort((left, right) => timestampMs(right.createdAt) - timestampMs(left.createdAt))
+        .slice(MAX_AUTO_BACKUP_SNAPSHOTS);
+
+      staleSnapshots.forEach((entry) => {
+        if (entry?.id) {
+          store.delete(entry.id);
+        }
+      });
+    }
+
+    await waitForTransaction(transaction);
+    await refreshBackupSummary();
+    return snapshot;
+  } catch (error) {
+    setBackupStatus(
+      `Automatic backup warning: ${error instanceof Error ? error.message : "could not save snapshot."}`,
+      "error"
+    );
+    return null;
+  }
+}
+
+function parseImportedBackup(rawValue) {
+  if (!rawValue || typeof rawValue !== "object") {
+    throw new Error("That file does not contain a valid backup.");
+  }
+
+  if (
+    rawValue.kind === "student-lesson-tracker-backup" &&
+    rawValue.envelope &&
+    typeof rawValue.envelope === "object"
+  ) {
+    return {
+      updatedAt: normalizeTimestamp(rawValue.envelope.updatedAt ?? rawValue.exportedAt),
+      data: sanitizeState(rawValue.envelope.data)
+    };
+  }
+
+  if (rawValue.data && typeof rawValue.data === "object") {
+    return {
+      updatedAt: normalizeTimestamp(rawValue.updatedAt),
+      data: sanitizeState(rawValue.data)
+    };
+  }
+
+  return {
+    updatedAt: new Date().toISOString(),
+    data: sanitizeState(rawValue)
+  };
 }
 
 function sanitizeState(raw) {
@@ -1277,6 +1487,8 @@ function render() {
   renderGlobalMaterialList();
   renderStudentsBoard();
   renderSyncStatus();
+  renderBackupSummary();
+  renderSyncSafetyBanner();
 }
 
 function renderAppMeta() {
@@ -1651,6 +1863,43 @@ function renderSyncStatus() {
   dom.syncStatus.textContent = syncStatus;
   dom.syncNowBtn.disabled = !isSyncConfigured() || syncInFlight;
   dom.syncNowBtn.textContent = syncInFlight ? "Syncing..." : "Sync Now";
+}
+
+function renderSyncSafetyBanner() {
+  if (!(dom.syncSafetyBanner instanceof HTMLElement)) {
+    return;
+  }
+
+  if (!syncSafetyNotice?.message) {
+    dom.syncSafetyBanner.hidden = true;
+    dom.syncSafetyBanner.className = "sync-safety-banner";
+    dom.syncSafetyBanner.innerHTML = "";
+    return;
+  }
+
+  dom.syncSafetyBanner.hidden = false;
+  dom.syncSafetyBanner.className = `sync-safety-banner is-${syncSafetyNotice.tone || "warning"}`;
+  dom.syncSafetyBanner.innerHTML = `
+    <div class="sync-safety-copy">
+      <strong>Safety check</strong>
+      <span>${escapeHtml(syncSafetyNotice.message)}</span>
+    </div>
+    <button
+      type="button"
+      class="ghost sync-safety-dismiss"
+      data-action="dismiss-sync-safety-banner"
+    >
+      Dismiss
+    </button>
+  `;
+}
+
+function renderBackupSummary() {
+  if (!(dom.backupSummary instanceof HTMLElement)) {
+    return;
+  }
+
+  dom.backupSummary.textContent = backupSummary;
 }
 
 function renderGlobalMaterialList() {
@@ -2325,6 +2574,32 @@ function handleClick(event) {
     return;
   }
 
+  if (target.id === "exportBackupBtn") {
+    const record = buildBackupRecord({
+      envelope: {
+        updatedAt: stateUpdatedAt || new Date().toISOString(),
+        data: state
+      },
+      source: "manual-export"
+    });
+    downloadBackupRecord(record, "student-lesson-tracker-backup");
+    setBackupStatus(
+      `Exported full backup with ${record.envelope.data.students.length} students and ${record.envelope.data.globalMaterials.length} system items.`,
+      "success"
+    );
+    return;
+  }
+
+  if (target.id === "downloadLatestAutoBackupBtn") {
+    void downloadLatestAutoBackup();
+    return;
+  }
+
+  if (target.id === "importBackupBtn") {
+    void importBackupFile();
+    return;
+  }
+
   if (target.id === "syncNowBtn") {
     void syncNow();
     return;
@@ -2461,6 +2736,11 @@ function handleClick(event) {
 
   const action = actionElement.dataset.action;
   if (!action) {
+    return;
+  }
+
+  if (action === "dismiss-sync-safety-banner") {
+    setSyncSafetyNotice("");
     return;
   }
 
@@ -3183,6 +3463,10 @@ function setFolderSyncStatus(message, tone = "success") {
   setStatusMessage(dom.folderSyncStatus, message, tone);
 }
 
+function setBackupStatus(message, tone = "success") {
+  setStatusMessage(dom.backupStatus, message, tone);
+}
+
 function setStatusMessage(element, message, tone = "success") {
   if (!(element instanceof HTMLElement)) {
     return;
@@ -3190,6 +3474,79 @@ function setStatusMessage(element, message, tone = "success") {
   element.textContent = message;
   element.classList.remove("is-success", "is-error");
   element.classList.add(tone === "error" ? "is-error" : "is-success");
+}
+
+function setSyncSafetyNotice(message, tone = "warning") {
+  syncSafetyNotice = message
+    ? {
+        message,
+        tone
+      }
+    : null;
+  renderSyncSafetyBanner();
+}
+
+async function downloadLatestAutoBackup() {
+  try {
+    const snapshots = await loadAllAutoBackupSnapshots();
+    if (!snapshots.length) {
+      setBackupStatus("No automatic backup snapshot has been saved in this browser yet.", "error");
+      return;
+    }
+
+    const latestSnapshot = snapshots[0];
+    downloadBackupRecord(latestSnapshot, "student-lesson-tracker-auto-backup");
+    setBackupStatus(
+      `Downloaded latest automatic backup from ${formatBackupTimestamp(latestSnapshot.createdAt)}.`,
+      "success"
+    );
+  } catch (error) {
+    setBackupStatus(
+      error instanceof Error ? error.message : "Could not download the latest automatic backup.",
+      "error"
+    );
+  }
+}
+
+async function importBackupFile() {
+  const input = dom.backupImportInput;
+  if (!(input instanceof HTMLInputElement) || !input.files || input.files.length === 0) {
+    setBackupStatus("Choose a backup JSON file before importing.", "error");
+    return;
+  }
+
+  const [file] = input.files;
+  let parsedBackup;
+
+  try {
+    parsedBackup = parseImportedBackup(JSON.parse(await file.text()));
+  } catch (error) {
+    setBackupStatus(
+      error instanceof Error ? error.message : "That backup file could not be read.",
+      "error"
+    );
+    return;
+  }
+
+  const nextState = parsedBackup.data;
+  const confirmMessage =
+    `Import this backup with ${nextState.students.length} students and ${nextState.globalMaterials.length} system material items? ` +
+    "This replaces the current tracker on this browser and syncs it to the shared cloud copy.";
+
+  if (!confirm(confirmMessage)) {
+    return;
+  }
+
+  await saveAutoBackupSnapshot("pre-import-current-state", state, stateUpdatedAt || new Date().toISOString());
+
+  state = nextState;
+  stateUpdatedAt = normalizeTimestamp(parsedBackup.updatedAt);
+  persistAndRender();
+  setBackupStatus(
+    `Imported backup with ${nextState.students.length} students and ${nextState.globalMaterials.length} system items.`,
+    "success"
+  );
+  input.value = "";
 }
 
 async function syncMaterialFolderFiles() {
@@ -4349,6 +4706,36 @@ function hasMeaningfulData() {
   return hasMeaningfulDataInState(state);
 }
 
+function restoreStateFromRemote(remote, warningMessage, syncMessage) {
+  state = sanitizeState(remote.data);
+  stateUpdatedAt = normalizeTimestamp(remote.updatedAt);
+  persistLocalEnvelope();
+  render();
+  setSyncSafetyNotice(warningMessage, "warning");
+  syncStatus = syncMessage;
+}
+
+async function protectAgainstEmptyWrite(nextState) {
+  if (hasMeaningfulDataInState(nextState)) {
+    return { blocked: false };
+  }
+
+  const remote = await fetchRemoteEnvelope();
+  if (remote && hasMeaningfulDataInState(remote.data)) {
+    restoreStateFromRemote(
+      remote,
+      "This browser opened with an empty tracker, so the app protected the shared cloud data instead of overwriting it.",
+      `Cloud sync: protected shared data (${formatSyncTime(remote.updatedAt)}).`
+    );
+    return {
+      blocked: true,
+      updatedAt: remote.updatedAt
+    };
+  }
+
+  return { blocked: false };
+}
+
 function buildSyncHeaders(includeContentType = false) {
   const headers = {
     apikey: SYNC_CONFIG.supabaseAnonKey,
@@ -4415,7 +4802,15 @@ async function pullRemoteAndMerge({ forcePushIfMissing = false, manual = false, 
 
     if (!remote) {
       if (forcePushIfMissing && hasMeaningfulData()) {
-        const remoteUpdatedAt = await upsertRemoteEnvelope(state, stateUpdatedAt);
+        const writeResult = await upsertRemoteEnvelope(
+          state,
+          stateUpdatedAt,
+          manual ? "manual-sync-upload" : "initial-cloud-upload"
+        );
+        if (writeResult.blocked) {
+          return;
+        }
+        const remoteUpdatedAt = writeResult.updatedAt;
         stateUpdatedAt = normalizeTimestamp(remoteUpdatedAt);
         persistLocalEnvelope();
         syncStatus = `Cloud sync: uploaded (${formatSyncTime(stateUpdatedAt)}).`;
@@ -4425,11 +4820,32 @@ async function pullRemoteAndMerge({ forcePushIfMissing = false, manual = false, 
       return;
     }
 
+    if (hasMeaningfulDataInState(remote.data) && !hasMeaningfulData()) {
+      restoreStateFromRemote(
+        remote,
+        "This browser opened with an empty local copy, so the app loaded the shared cloud data instead of letting an empty state take over.",
+        `Cloud sync: protected shared data (${formatSyncTime(remote.updatedAt)}).`
+      );
+      return;
+    }
+
     if (isRemoteNewer(remote.updatedAt)) {
       if (!hasMeaningfulDataInState(remote.data) && hasMeaningfulData()) {
-        const remoteUpdatedAt = await upsertRemoteEnvelope(state, new Date().toISOString());
+        const writeResult = await upsertRemoteEnvelope(
+          state,
+          new Date().toISOString(),
+          "restore-after-empty-cloud"
+        );
+        if (writeResult.blocked) {
+          return;
+        }
+        const remoteUpdatedAt = writeResult.updatedAt;
         stateUpdatedAt = normalizeTimestamp(remoteUpdatedAt);
         persistLocalEnvelope();
+        setSyncSafetyNotice(
+          "The shared cloud copy was empty, so the app restored it from the fuller local copy on this browser.",
+          "success"
+        );
         syncStatus = `Cloud sync: restored local data after empty cloud overwrite (${formatSyncTime(stateUpdatedAt)}).`;
         return;
       }
@@ -4441,7 +4857,15 @@ async function pullRemoteAndMerge({ forcePushIfMissing = false, manual = false, 
         stateUpdatedAt = new Date().toISOString();
         persistLocalEnvelope();
         render();
-        const remoteUpdatedAt = await upsertRemoteEnvelope(state, stateUpdatedAt);
+        const writeResult = await upsertRemoteEnvelope(
+          state,
+          stateUpdatedAt,
+          "restore-local-student-fields"
+        );
+        if (writeResult.blocked) {
+          return;
+        }
+        const remoteUpdatedAt = writeResult.updatedAt;
         stateUpdatedAt = normalizeTimestamp(remoteUpdatedAt);
         persistLocalEnvelope();
         syncStatus = `Cloud sync: restored local student data (${formatSyncTime(stateUpdatedAt)}).`;
@@ -4456,7 +4880,15 @@ async function pullRemoteAndMerge({ forcePushIfMissing = false, manual = false, 
     }
 
     if (forcePushIfMissing && hasMeaningfulData() && timestampMs(stateUpdatedAt) > timestampMs(remote.updatedAt)) {
-      const remoteUpdatedAt = await upsertRemoteEnvelope(state, stateUpdatedAt);
+      const writeResult = await upsertRemoteEnvelope(
+        state,
+        stateUpdatedAt,
+        manual ? "manual-sync-upload" : "local-state-newer"
+      );
+      if (writeResult.blocked) {
+        return;
+      }
+      const remoteUpdatedAt = writeResult.updatedAt;
       stateUpdatedAt = normalizeTimestamp(remoteUpdatedAt);
       persistLocalEnvelope();
       syncStatus = `Cloud sync: uploaded (${formatSyncTime(stateUpdatedAt)}).`;
@@ -4487,7 +4919,11 @@ async function pushCurrentStateToCloud() {
   renderSyncStatus();
 
   try {
-    const remoteUpdatedAt = await upsertRemoteEnvelope(state, stateUpdatedAt);
+    const writeResult = await upsertRemoteEnvelope(state, stateUpdatedAt, "scheduled-cloud-push");
+    if (writeResult.blocked) {
+      return;
+    }
+    const remoteUpdatedAt = writeResult.updatedAt;
     stateUpdatedAt = normalizeTimestamp(remoteUpdatedAt);
     persistLocalEnvelope();
     syncStatus = `Cloud sync: uploaded (${formatSyncTime(stateUpdatedAt)}).`;
@@ -4527,7 +4963,14 @@ async function fetchRemoteEnvelope() {
   };
 }
 
-async function upsertRemoteEnvelope(nextState, nextUpdatedAt) {
+async function upsertRemoteEnvelope(nextState, nextUpdatedAt, backupReason = "cloud-write") {
+  const guardResult = await protectAgainstEmptyWrite(nextState);
+  if (guardResult.blocked) {
+    return guardResult;
+  }
+
+  await saveAutoBackupSnapshot(backupReason, nextState, nextUpdatedAt);
+
   const body = [
     {
       studio_id: SYNC_CONFIG.studioId,
@@ -4554,8 +4997,14 @@ async function upsertRemoteEnvelope(nextState, nextUpdatedAt) {
 
   const rows = await response.json();
   if (!Array.isArray(rows) || rows.length === 0) {
-    return normalizeTimestamp(nextUpdatedAt);
+    return {
+      blocked: false,
+      updatedAt: normalizeTimestamp(nextUpdatedAt)
+    };
   }
 
-  return normalizeTimestamp(rows[0].updated_at);
+  return {
+    blocked: false,
+    updatedAt: normalizeTimestamp(rows[0].updated_at)
+  };
 }

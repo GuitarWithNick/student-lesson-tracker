@@ -65,6 +65,15 @@ Local cache key:
 
 - `student-practice-tracker-v1`
 
+## Backups
+
+Use the **Backups** panel in Admin Tools for manual recovery points.
+
+- `Export Full Backup` downloads the full tracker as JSON.
+- `Import Backup` restores a saved backup JSON into the current browser and syncs it back to cloud.
+- Automatic local snapshots are saved before every cloud write on each browser.
+- `Download Latest Auto Backup` lets you pull the newest automatic snapshot from the current browser.
+
 ## Spreadsheet Import
 
 Use the **Import Spreadsheet** panel in the app.

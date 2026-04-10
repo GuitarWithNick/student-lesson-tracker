@@ -30,6 +30,7 @@
           </p>
           <button id="syncNowBtn" type="button" class="ghost">Sync Now</button>
         </div>
+        <div id="syncSafetyBanner" class="sync-safety-banner" hidden></div>
       </header>
 
       <div class="view-tabs panel" role="tablist" aria-label="Workspace sections">
@@ -221,6 +222,32 @@
               selected path so the app can map it correctly.
             </p>
             <p id="folderSyncStatus" class="import-status"></p>
+          </section>
+
+          <section class="panel tool-panel">
+            <h2>Backups</h2>
+            <p class="muted">
+              Export the full tracker anytime, import a saved backup when needed, and keep automatic
+              local snapshots before every cloud write on this browser.
+            </p>
+            <div class="system-options-row backup-actions-row">
+              <button id="exportBackupBtn" type="button">Export Full Backup</button>
+              <button id="downloadLatestAutoBackupBtn" type="button" class="ghost">
+                Download Latest Auto Backup
+              </button>
+            </div>
+            <div class="import-row">
+              <input
+                id="backupImportInput"
+                type="file"
+                accept=".json,application/json"
+              />
+              <button id="importBackupBtn" type="button">Import Backup</button>
+            </div>
+            <p id="backupSummary" class="import-note">
+              Automatic backup snapshots are stored locally in this browser.
+            </p>
+            <p id="backupStatus" class="import-status"></p>
           </section>
         </div>
       </section>

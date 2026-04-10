@@ -168,6 +168,43 @@ h4 {
   gap: 0.6rem;
 }
 
+.sync-safety-banner {
+  margin-top: 0.7rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid #f2d28f;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fff9ec, #fff4d9);
+  color: #6b4d11;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.sync-safety-banner.is-success {
+  border-color: #b9dfd2;
+  background: linear-gradient(180deg, #edf9f4, #e1f3eb);
+  color: #1f5f4e;
+}
+
+.sync-safety-copy {
+  display: grid;
+  gap: 0.2rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.sync-safety-copy strong {
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sync-safety-dismiss {
+  flex: 0 0 auto;
+}
+
 .sync-status {
   margin: 0;
   font-size: 0.88rem;
@@ -375,6 +412,12 @@ button:focus-visible {
 
 .system-options-row {
   margin-top: 0.5rem;
+}
+
+.backup-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
 }
 
 .system-options .danger-row {
