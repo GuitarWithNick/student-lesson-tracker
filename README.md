@@ -42,6 +42,23 @@ Recommended update flow:
 
 This repo includes `netlify.toml`, so Netlify should publish the repo root automatically.
 
+### Quick publish checklist
+
+Use this every time we want the hosted app updated:
+
+- Confirm you're editing the tracked repo folder: `student-tracker-app`
+- Check the current repo status:
+  `git status --short --branch`
+- Commit the changes:
+  `git add . && git commit -m "Describe the update"`
+- Push to GitHub:
+  `git push origin main`
+- Wait for Netlify to finish deploying
+- Refresh the hosted app URL on your laptop and other computers
+- Confirm the header version badge changed to the new build number
+
+If a push ever fails on this Mac, GitHub may be asking for the personal access token again.
+
 ## Local data
 
 Local cache key:
