@@ -1,5 +1,5 @@
 const STORAGE_KEY = "student-practice-tracker-v1";
-const APP_VERSION = "2026.04.10.5";
+const APP_VERSION = "2026.04.14.2";
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday"];
 const PUSH_DEBOUNCE_MS = 500;
 const POLL_INTERVAL_MS = 15000;
@@ -47,9 +47,10 @@ const TUESDAY_STARTER_STUDENTS = [
   "Jack",
   "Ozzy",
   "Ruth",
-  "Reyven"
+  "Reyven",
+  "Charlie"
 ];
-const TUESDAY_STARTER_STUDENTS_MIGRATION_KEY = `${STORAGE_KEY}-starter-students-tuesday-v2`;
+const TUESDAY_STARTER_STUDENTS_MIGRATION_KEY = `${STORAGE_KEY}-starter-students-tuesday-v3`;
 const WEDNESDAY_STARTER_STUDENTS = [
   "Tim",
   "Phil",
@@ -548,7 +549,6 @@ let selectedBassSubcategory = "";
 let expandedStudentMaterialCategories = {};
 let studentMaterialSearchTerms = {};
 let activeWorkspaceTab = "students";
-let syncSafetyNotice = null;
 let backupSummary = "Automatic backup snapshots are stored locally in this browser.";
 let backupDbPromise = null;
 
@@ -577,7 +577,6 @@ const dom = {
   backupSummary: document.getElementById("backupSummary"),
   syncStatus: document.getElementById("syncStatus"),
   syncNowBtn: document.getElementById("syncNowBtn"),
-  syncSafetyBanner: document.getElementById("syncSafetyBanner"),
   appVersion: document.getElementById("appVersion"),
   appRuntime: document.getElementById("appRuntime"),
   studentFocusSelect: document.getElementById("studentFocusSelect"),
@@ -1488,7 +1487,6 @@ function render() {
   renderStudentsBoard();
   renderSyncStatus();
   renderBackupSummary();
-  renderSyncSafetyBanner();
 }
 
 function renderAppMeta() {
@@ -1865,35 +1863,6 @@ function renderSyncStatus() {
   dom.syncNowBtn.textContent = syncInFlight ? "Syncing..." : "Sync Now";
 }
 
-function renderSyncSafetyBanner() {
-  if (!(dom.syncSafetyBanner instanceof HTMLElement)) {
-    return;
-  }
-
-  if (!syncSafetyNotice?.message) {
-    dom.syncSafetyBanner.hidden = true;
-    dom.syncSafetyBanner.className = "sync-safety-banner";
-    dom.syncSafetyBanner.innerHTML = "";
-    return;
-  }
-
-  dom.syncSafetyBanner.hidden = false;
-  dom.syncSafetyBanner.className = `sync-safety-banner is-${syncSafetyNotice.tone || "warning"}`;
-  dom.syncSafetyBanner.innerHTML = `
-    <div class="sync-safety-copy">
-      <strong>Safety check</strong>
-      <span>${escapeHtml(syncSafetyNotice.message)}</span>
-    </div>
-    <button
-      type="button"
-      class="ghost sync-safety-dismiss"
-      data-action="dismiss-sync-safety-banner"
-    >
-      Dismiss
-    </button>
-  `;
-}
-
 function renderBackupSummary() {
   if (!(dom.backupSummary instanceof HTMLElement)) {
     return;
@@ -1933,7 +1902,7 @@ function renderGlobalMaterialList() {
           ${group.entries.map((material) => `
             <li class="mini-row">
               <span>${escapeHtml(material.name)}</span>
-              <button type="button" class="danger" data-action="remove-global-material" data-material-id="${material.id}">
+              <button type="button" class="danger" data-action="remove-global-material" data-material-id="${escapeAttribute(material.id)}">
                 Delete
               </button>
             </li>
@@ -2739,11 +2708,6 @@ function handleClick(event) {
     return;
   }
 
-  if (action === "dismiss-sync-safety-banner") {
-    setSyncSafetyNotice("");
-    return;
-  }
-
   if (action === "switch-workspace-tab") {
     activeWorkspaceTab = actionElement.dataset.tab === "admin" ? "admin" : "students";
     renderWorkspaceTabs();
@@ -3241,13 +3205,15 @@ function handleInput(event) {
 
     renderStudentsBoard();
 
-    const nextInput = document.querySelector(
-      `[data-action="update-student-material-search"][data-student-id="${studentId}"][data-category-key="${categoryKey}"]`
-    );
-    if (nextInput instanceof HTMLInputElement) {
-      nextInput.focus();
-      nextInput.setSelectionRange(nextSearchTerm.length, nextSearchTerm.length);
-    }
+    requestAnimationFrame(() => {
+      const nextInput = document.querySelector(
+        `[data-action="update-student-material-search"][data-student-id="${studentId}"][data-category-key="${categoryKey}"]`
+      );
+      if (nextInput instanceof HTMLInputElement) {
+        nextInput.focus();
+        nextInput.setSelectionRange(nextSearchTerm.length, nextSearchTerm.length);
+      }
+    });
   }
 }
 
@@ -3474,16 +3440,6 @@ function setStatusMessage(element, message, tone = "success") {
   element.textContent = message;
   element.classList.remove("is-success", "is-error");
   element.classList.add(tone === "error" ? "is-error" : "is-success");
-}
-
-function setSyncSafetyNotice(message, tone = "warning") {
-  syncSafetyNotice = message
-    ? {
-        message,
-        tone
-      }
-    : null;
-  renderSyncSafetyBanner();
 }
 
 async function downloadLatestAutoBackup() {
@@ -4711,8 +4667,7 @@ function restoreStateFromRemote(remote, warningMessage, syncMessage) {
   stateUpdatedAt = normalizeTimestamp(remote.updatedAt);
   persistLocalEnvelope();
   render();
-  setSyncSafetyNotice(warningMessage, "warning");
-  syncStatus = syncMessage;
+  syncStatus = warningMessage ? `${syncMessage} ${warningMessage}` : syncMessage;
 }
 
 async function protectAgainstEmptyWrite(nextState) {
@@ -4842,11 +4797,9 @@ async function pullRemoteAndMerge({ forcePushIfMissing = false, manual = false, 
         const remoteUpdatedAt = writeResult.updatedAt;
         stateUpdatedAt = normalizeTimestamp(remoteUpdatedAt);
         persistLocalEnvelope();
-        setSyncSafetyNotice(
-          "The shared cloud copy was empty, so the app restored it from the fuller local copy on this browser.",
-          "success"
-        );
-        syncStatus = `Cloud sync: restored local data after empty cloud overwrite (${formatSyncTime(stateUpdatedAt)}).`;
+        syncStatus =
+          `Cloud sync: restored local data after empty cloud overwrite (${formatSyncTime(stateUpdatedAt)}). ` +
+          "The shared cloud copy was empty, so this browser restored it from the fuller local copy.";
         return;
       }
 
