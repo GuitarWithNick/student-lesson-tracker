@@ -49,9 +49,10 @@ const TUESDAY_STARTER_STUDENTS = [
   "Ruth",
   "Reyven",
   "Charlie",
-  "Hak"
+  "Hak",
+  "Harjot"
 ];
-const TUESDAY_STARTER_STUDENTS_MIGRATION_KEY = `${STORAGE_KEY}-starter-students-tuesday-v4`;
+const TUESDAY_STARTER_STUDENTS_MIGRATION_KEY = `${STORAGE_KEY}-starter-students-tuesday-v5`;
 const WEDNESDAY_STARTER_STUDENTS = [
   "Tim",
   "Phil",
@@ -626,7 +627,8 @@ function defaultState() {
   return {
     sortMode: "day",
     globalMaterials: [],
-    students: []
+    students: [],
+    deletedStudents: []
   };
 }
 
@@ -878,11 +880,13 @@ function sanitizeState(raw) {
   const globalMaterials = sanitizeGlobalMaterials(candidate.globalMaterials);
   const globalIds = new Set(globalMaterials.map((item) => item.id));
   const students = sanitizeStudents(candidate.students, globalIds);
+  const deletedStudents = sanitizeDeletedStudents(candidate.deletedStudents, students);
 
   return {
     sortMode,
     globalMaterials,
-    students
+    students,
+    deletedStudents
   };
 }
 
@@ -952,6 +956,66 @@ function sanitizeStudents(value, validGlobalIds) {
     });
     return accumulator;
   }, []);
+}
+
+function mergeDeletedStudentLists(...lists) {
+  const mergedByKey = new Map();
+
+  lists.flat().forEach((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return;
+    }
+
+    const name = normalizeText(entry.name);
+    if (!name) {
+      return;
+    }
+
+    const day = DAYS.includes(entry.day) ? entry.day : "";
+    const deletedAt = sanitizeArchivedAt(entry.deletedAt ?? entry.deleted_at ?? entry.updatedAt);
+    const key = `${name.toLowerCase()}::${day.toLowerCase()}`;
+    const existingEntry = mergedByKey.get(key);
+
+    if (!existingEntry || timestampMs(deletedAt) > timestampMs(existingEntry.deletedAt)) {
+      mergedByKey.set(key, {
+        name,
+        day,
+        deletedAt
+      });
+    }
+  });
+
+  return [...mergedByKey.values()];
+}
+
+function studentDeletionMatchKeys(student) {
+  if (!student || typeof student !== "object") {
+    return [];
+  }
+
+  const normalizedName = normalizeText(student.name).toLowerCase();
+  if (!normalizedName) {
+    return [];
+  }
+
+  const keys = [`name:${normalizedName}`];
+  if (DAYS.includes(student.day)) {
+    keys.push(`name-day:${normalizedName}::${student.day.toLowerCase()}`);
+  }
+
+  return keys;
+}
+
+function sanitizeDeletedStudents(value, students = []) {
+  const merged = mergeDeletedStudentLists(Array.isArray(value) ? value : []);
+  if (!merged.length) {
+    return [];
+  }
+
+  const activeKeys = new Set(students.flatMap((student) => studentDeletionMatchKeys(student)));
+  return merged.filter(
+    (entry) => !studentDeletionMatchKeys(entry).some((key) => activeKeys.has(key))
+  );
 }
 
 function sanitizeNotesText(value) {
@@ -2432,6 +2496,7 @@ function handleSubmit(event) {
       day,
       goals: [],
       songs: [],
+      riffs: [],
       notes: "",
       archived: false,
       archivedAt: "",
@@ -2917,6 +2982,17 @@ function handleClick(event) {
     if (!confirm(`Delete ${student.name}?`)) {
       return;
     }
+    state.deletedStudents = sanitizeDeletedStudents(
+      [
+        ...(Array.isArray(state.deletedStudents) ? state.deletedStudents : []),
+        {
+          name: student.name,
+          day: student.day,
+          deletedAt: new Date().toISOString()
+        }
+      ],
+      state.students.filter((entry) => entry.id !== student.id)
+    );
     state.students = state.students.filter((entry) => entry.id !== student.id);
     delete expandedStudentMaterialCategories[student.id];
     delete studentMaterialSearchTerms[student.id];
@@ -4520,6 +4596,22 @@ function buildStudentLookup(students) {
   return lookup;
 }
 
+function buildDeletedStudentLookup(deletedStudents) {
+  const lookup = new Set();
+
+  deletedStudents.forEach((entry) => {
+    studentDeletionMatchKeys(entry).forEach((key) => {
+      lookup.add(key);
+    });
+  });
+
+  return lookup;
+}
+
+function isStudentCoveredByDeletedLookup(student, deletedLookup) {
+  return studentDeletionMatchKeys(student).some((key) => deletedLookup.has(key));
+}
+
 function mergeGoalsPreservingMet(localGoals, incomingGoals) {
   const localByText = new Map(
     localGoals.map((goal) => [normalizeText(goal.text).toLowerCase(), goal])
@@ -4637,6 +4729,79 @@ function mergeStatePreservingLocalStudentFields(localState, incomingState) {
     state: {
       ...incomingState,
       students: mergedStudents
+    },
+    changed
+  };
+}
+
+function mergeStateSafelyForCloudWrite(outgoingState, remoteState) {
+  const combinedDeletedStudents = mergeDeletedStudentLists(
+    outgoingState.deletedStudents,
+    remoteState.deletedStudents
+  );
+  const deletedLookup = buildDeletedStudentLookup(combinedDeletedStudents);
+  let changed = false;
+
+  const prunedOutgoingStudents = outgoingState.students.filter((student) => {
+    const keepStudent = !isStudentCoveredByDeletedLookup(student, deletedLookup);
+    if (!keepStudent) {
+      changed = true;
+    }
+    return keepStudent;
+  });
+
+  let nextState = {
+    ...outgoingState,
+    students: prunedOutgoingStudents
+  };
+
+  const preservedStateResult = mergeStatePreservingLocalStudentFields(remoteState, nextState);
+  nextState = preservedStateResult.state;
+  if (preservedStateResult.changed) {
+    changed = true;
+  }
+
+  const nextStudentLookup = buildStudentLookup(nextState.students);
+  const missingRemoteStudents = remoteState.students.filter((student) => {
+    const existsLocally = studentMatchKeys(student).some((key) => nextStudentLookup.has(key));
+    if (existsLocally) {
+      return false;
+    }
+    return !isStudentCoveredByDeletedLookup(student, deletedLookup);
+  });
+
+  if (missingRemoteStudents.length) {
+    nextState = {
+      ...nextState,
+      students: [...nextState.students, ...missingRemoteStudents]
+    };
+    changed = true;
+  }
+
+  const cleanedDeletedStudents = sanitizeDeletedStudents(
+    combinedDeletedStudents,
+    nextState.students
+  );
+
+  if (
+    cleanedDeletedStudents.length !== (outgoingState.deletedStudents?.length ?? 0) ||
+    cleanedDeletedStudents.some((entry, index) => {
+      const previous = outgoingState.deletedStudents?.[index];
+      return (
+        !previous ||
+        previous.name !== entry.name ||
+        previous.day !== entry.day ||
+        previous.deletedAt !== entry.deletedAt
+      );
+    })
+  ) {
+    changed = true;
+  }
+
+  return {
+    state: {
+      ...nextState,
+      deletedStudents: cleanedDeletedStudents
     },
     changed
   };
@@ -4766,6 +4931,10 @@ async function pullRemoteAndMerge({ forcePushIfMissing = false, manual = false, 
         if (writeResult.blocked) {
           return;
         }
+        if (writeResult.state) {
+          state = sanitizeState(writeResult.state);
+          render();
+        }
         const remoteUpdatedAt = writeResult.updatedAt;
         stateUpdatedAt = normalizeTimestamp(remoteUpdatedAt);
         persistLocalEnvelope();
@@ -4795,6 +4964,10 @@ async function pullRemoteAndMerge({ forcePushIfMissing = false, manual = false, 
         if (writeResult.blocked) {
           return;
         }
+        if (writeResult.state) {
+          state = sanitizeState(writeResult.state);
+          render();
+        }
         const remoteUpdatedAt = writeResult.updatedAt;
         stateUpdatedAt = normalizeTimestamp(remoteUpdatedAt);
         persistLocalEnvelope();
@@ -4819,6 +4992,10 @@ async function pullRemoteAndMerge({ forcePushIfMissing = false, manual = false, 
         if (writeResult.blocked) {
           return;
         }
+        if (writeResult.state) {
+          state = sanitizeState(writeResult.state);
+          render();
+        }
         const remoteUpdatedAt = writeResult.updatedAt;
         stateUpdatedAt = normalizeTimestamp(remoteUpdatedAt);
         persistLocalEnvelope();
@@ -4841,6 +5018,10 @@ async function pullRemoteAndMerge({ forcePushIfMissing = false, manual = false, 
       );
       if (writeResult.blocked) {
         return;
+      }
+      if (writeResult.state) {
+        state = sanitizeState(writeResult.state);
+        render();
       }
       const remoteUpdatedAt = writeResult.updatedAt;
       stateUpdatedAt = normalizeTimestamp(remoteUpdatedAt);
@@ -4876,6 +5057,10 @@ async function pushCurrentStateToCloud() {
     const writeResult = await upsertRemoteEnvelope(state, stateUpdatedAt, "scheduled-cloud-push");
     if (writeResult.blocked) {
       return;
+    }
+    if (writeResult.state) {
+      state = sanitizeState(writeResult.state);
+      render();
     }
     const remoteUpdatedAt = writeResult.updatedAt;
     stateUpdatedAt = normalizeTimestamp(remoteUpdatedAt);
@@ -4923,13 +5108,20 @@ async function upsertRemoteEnvelope(nextState, nextUpdatedAt, backupReason = "cl
     return guardResult;
   }
 
-  await saveAutoBackupSnapshot(backupReason, nextState, nextUpdatedAt);
+  const remote = await fetchRemoteEnvelope();
+  const mergedWriteResult = remote
+    ? mergeStateSafelyForCloudWrite(nextState, remote.data)
+    : { state: nextState, changed: false };
+  const safeState = mergedWriteResult.state;
+  const safeUpdatedAt = mergedWriteResult.changed ? new Date().toISOString() : nextUpdatedAt;
+
+  await saveAutoBackupSnapshot(backupReason, safeState, safeUpdatedAt);
 
   const body = [
     {
       studio_id: SYNC_CONFIG.studioId,
-      payload: nextState,
-      updated_at: normalizeTimestamp(nextUpdatedAt)
+      payload: safeState,
+      updated_at: normalizeTimestamp(safeUpdatedAt)
     }
   ];
 
@@ -4953,12 +5145,14 @@ async function upsertRemoteEnvelope(nextState, nextUpdatedAt, backupReason = "cl
   if (!Array.isArray(rows) || rows.length === 0) {
     return {
       blocked: false,
-      updatedAt: normalizeTimestamp(nextUpdatedAt)
+      updatedAt: normalizeTimestamp(safeUpdatedAt),
+      state: safeState
     };
   }
 
   return {
     blocked: false,
-    updatedAt: normalizeTimestamp(rows[0].updated_at)
+    updatedAt: normalizeTimestamp(rows[0].updated_at),
+    state: safeState
   };
 }
