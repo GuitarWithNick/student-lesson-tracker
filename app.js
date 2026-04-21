@@ -48,9 +48,10 @@ const TUESDAY_STARTER_STUDENTS = [
   "Ozzy",
   "Ruth",
   "Reyven",
-  "Charlie"
+  "Charlie",
+  "Hak"
 ];
-const TUESDAY_STARTER_STUDENTS_MIGRATION_KEY = `${STORAGE_KEY}-starter-students-tuesday-v3`;
+const TUESDAY_STARTER_STUDENTS_MIGRATION_KEY = `${STORAGE_KEY}-starter-students-tuesday-v4`;
 const WEDNESDAY_STARTER_STUDENTS = [
   "Tim",
   "Phil",
