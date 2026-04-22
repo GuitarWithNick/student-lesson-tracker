@@ -1019,6 +1019,43 @@ function sanitizeDeletedStudents(value, students = []) {
   );
 }
 
+function hasDeletedStudentRecord(name, day, deletedStudents = state.deletedStudents) {
+  const normalizedName = normalizeText(name).toLowerCase();
+  const normalizedDay = DAYS.includes(day) ? day.toLowerCase() : "";
+  if (!normalizedName) {
+    return false;
+  }
+
+  return Array.isArray(deletedStudents)
+    ? deletedStudents.some((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return false;
+        }
+        const entryName = normalizeText(entry.name).toLowerCase();
+        const entryDay = DAYS.includes(entry.day) ? entry.day.toLowerCase() : "";
+        return entryName === normalizedName && entryDay === normalizedDay;
+      })
+    : false;
+}
+
+function clearDeletedStudentRecord(name, day) {
+  if (!Array.isArray(state.deletedStudents) || state.deletedStudents.length === 0) {
+    return;
+  }
+
+  const normalizedName = normalizeText(name).toLowerCase();
+  const normalizedDay = DAYS.includes(day) ? day.toLowerCase() : "";
+
+  state.deletedStudents = state.deletedStudents.filter((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return false;
+    }
+    const entryName = normalizeText(entry.name).toLowerCase();
+    const entryDay = DAYS.includes(entry.day) ? entry.day.toLowerCase() : "";
+    return entryName !== normalizedName || entryDay !== normalizedDay;
+  });
+}
+
 function sanitizeNotesText(value) {
   if (typeof value !== "string") {
     return "";
@@ -1482,7 +1519,12 @@ function maybeApplyStarterStudents({ students, migrationKey }) {
 
   students.forEach((entry) => {
     const name = normalizeText(entry?.name);
+    const day = DAYS.includes(entry?.day) ? entry.day : DAYS[0];
     if (!name) {
+      return;
+    }
+
+    if (hasDeletedStudentRecord(name, day)) {
       return;
     }
 
@@ -1494,7 +1536,7 @@ function maybeApplyStarterStudents({ students, migrationKey }) {
     const createdStudent = {
       id: uid("student"),
       name,
-      day: DAYS.includes(entry?.day) ? entry.day : DAYS[0],
+      day,
       goals: [],
       songs: [],
       riffs: [],
@@ -2504,6 +2546,7 @@ function handleSubmit(event) {
       customMaterials: [],
       globalGiven: {}
     };
+    clearDeletedStudentRecord(name, day);
     state.students.push(createdStudent);
     focusedStudentId = createdStudent.id;
     form.reset();
@@ -2965,6 +3008,7 @@ function handleClick(event) {
       return;
     }
 
+    clearDeletedStudentRecord(nextName, nextDay);
     student.name = nextName;
     student.day = nextDay;
     persistAndRender();
