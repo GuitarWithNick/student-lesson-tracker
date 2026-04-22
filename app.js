@@ -1,5 +1,5 @@
 const STORAGE_KEY = "student-practice-tracker-v1";
-const APP_VERSION = "2026.04.22.1";
+const APP_VERSION = "2026.04.22.2";
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday"];
 const PUSH_DEBOUNCE_MS = 500;
 const POLL_INTERVAL_MS = 15000;
@@ -8,8 +8,10 @@ const VERSION_MANIFEST_PATH = "version.json";
 const BACKUP_DB_NAME = "student-lesson-tracker-backups";
 const BACKUP_DB_VERSION = 1;
 const BACKUP_STORE_NAME = "snapshots";
-const MAX_AUTO_BACKUP_SNAPSHOTS = 8;
+const MAX_AUTO_BACKUP_SNAPSHOTS = 40;
 const LOCAL_ONLY_SYNC_STATUS = "Cloud sync: configure sync.config.js to enable shared data.";
+const LOCAL_PREVIEW_SYNC_STATUS =
+  "Cloud sync: local preview sync is disabled for safety. Use the hosted site for shared data.";
 const IMPORT_HEADER_ALIASES = {
   item: [
     "item",
@@ -619,13 +621,18 @@ function bootstrap() {
   render();
   void refreshBackupSummary();
 
-  if (syncConfigured) {
-    syncStatus = "Cloud sync: connecting...";
+  if (syncConfigured && isCloudSyncAllowed()) {
+    syncStatus = isHostedRuntime()
+      ? "Cloud sync: connecting..."
+      : "Cloud sync: connecting in local recovery mode...";
     renderSyncStatus();
     void initializeSync();
     pollTimer = window.setInterval(() => {
       void pullRemoteAndMerge({ silent: true });
     }, POLL_INTERVAL_MS);
+  } else if (syncConfigured) {
+    syncStatus = LOCAL_PREVIEW_SYNC_STATUS;
+    renderSyncStatus();
   }
 
   if (isHostedRuntime()) {
@@ -1981,12 +1988,18 @@ function renderSyncStatus() {
   }
 
   dom.syncStatus.textContent = syncStatus;
-  dom.syncNowBtn.disabled = !isSyncConfigured() || syncInFlight || hostedRefreshRequired;
+  const syncConfigured = isSyncConfigured();
+  const syncAllowed = isCloudSyncAllowed();
+  dom.syncNowBtn.disabled = !syncConfigured || !syncAllowed || syncInFlight || hostedRefreshRequired;
   dom.syncNowBtn.textContent = hostedRefreshRequired
     ? "Refresh Required"
-    : syncInFlight
-      ? "Syncing..."
-      : "Sync Now";
+    : !syncConfigured
+      ? "Sync Unavailable"
+      : !syncAllowed
+        ? "Hosted Only"
+        : syncInFlight
+          ? "Syncing..."
+          : "Sync Now";
 }
 
 function renderBackupSummary() {
@@ -4628,6 +4641,23 @@ function isHostedRuntime() {
   return window.location.protocol.startsWith("http") && window.location.hostname.length > 0;
 }
 
+function isLocalRecoverySyncEnabled() {
+  if (isHostedRuntime()) {
+    return true;
+  }
+
+  try {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("allowLocalSync") === "1";
+  } catch {
+    return false;
+  }
+}
+
+function isCloudSyncAllowed() {
+  return isSyncConfigured() && isLocalRecoverySyncEnabled();
+}
+
 function pauseCloudSyncForRefresh(remoteVersion) {
   hostedRefreshRequired = true;
   latestHostedVersion = normalizeText(remoteVersion) || APP_VERSION;
@@ -5018,6 +5048,11 @@ function formatSyncTime(value) {
 }
 
 async function initializeSync() {
+  if (!isCloudSyncAllowed()) {
+    syncStatus = LOCAL_PREVIEW_SYNC_STATUS;
+    renderSyncStatus();
+    return;
+  }
   if (await checkForDeployedVersion()) {
     return;
   }
@@ -5031,6 +5066,11 @@ async function syncNow() {
   if (!isSyncConfigured()) {
     return;
   }
+  if (!isCloudSyncAllowed()) {
+    syncStatus = LOCAL_PREVIEW_SYNC_STATUS;
+    renderSyncStatus();
+    return;
+  }
   if (await checkForDeployedVersion()) {
     return;
   }
@@ -5039,6 +5079,13 @@ async function syncNow() {
 
 function scheduleCloudPush() {
   if (!isSyncConfigured()) {
+    return;
+  }
+  if (!isCloudSyncAllowed()) {
+    if (syncStatus !== LOCAL_PREVIEW_SYNC_STATUS) {
+      syncStatus = LOCAL_PREVIEW_SYNC_STATUS;
+      renderSyncStatus();
+    }
     return;
   }
   if (hostedRefreshRequired) {
@@ -5058,6 +5105,13 @@ function scheduleCloudPush() {
 
 async function pullRemoteAndMerge({ forcePushIfMissing = false, manual = false, silent = false } = {}) {
   if (!isSyncConfigured()) {
+    return;
+  }
+  if (!isCloudSyncAllowed()) {
+    if (!silent) {
+      syncStatus = LOCAL_PREVIEW_SYNC_STATUS;
+      renderSyncStatus();
+    }
     return;
   }
   if (await checkForDeployedVersion({ silent })) {
@@ -5198,6 +5252,11 @@ async function pushCurrentStateToCloud() {
   if (!isSyncConfigured()) {
     return;
   }
+  if (!isCloudSyncAllowed()) {
+    syncStatus = LOCAL_PREVIEW_SYNC_STATUS;
+    renderSyncStatus();
+    return;
+  }
   if (await checkForDeployedVersion()) {
     return;
   }
@@ -5231,6 +5290,10 @@ async function pushCurrentStateToCloud() {
 }
 
 async function fetchRemoteEnvelope() {
+  if (!isCloudSyncAllowed()) {
+    throw new Error("local preview sync is disabled; use the hosted site instead");
+  }
+
   const params = new URLSearchParams({
     studio_id: `eq.${SYNC_CONFIG.studioId}`,
     select: "studio_id,payload,updated_at",
@@ -5259,6 +5322,14 @@ async function fetchRemoteEnvelope() {
 }
 
 async function upsertRemoteEnvelope(nextState, nextUpdatedAt, backupReason = "cloud-write") {
+  if (!isCloudSyncAllowed()) {
+    return {
+      blocked: true,
+      updatedAt: stateUpdatedAt,
+      state
+    };
+  }
+
   if (await checkForDeployedVersion({ silent: true })) {
     return {
       blocked: true,

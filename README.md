@@ -24,6 +24,8 @@ Use the Netlify-hosted URL as the main version of the app on all of your compute
 - Avoid opening older copied local versions unless you are intentionally testing something.
 - Student data syncs through Supabase.
 - App updates sync through GitHub + Netlify when new code is pushed to `main`.
+- Local `file://` previews no longer auto-sync to cloud by default. That is intentional protection.
+- If we ever need a controlled recovery from a local file, open it with `?allowLocalSync=1`.
 
 ## Publishing updates
 
@@ -72,6 +74,7 @@ Use the **Backups** panel in Admin Tools for manual recovery points.
 - `Export Full Backup` downloads the full tracker as JSON.
 - `Import Backup` restores a saved backup JSON into the current browser and syncs it back to cloud.
 - Automatic local snapshots are saved before every cloud write on each browser.
+- The app now keeps the most recent `40` automatic snapshots per browser instead of only a handful.
 - `Download Latest Auto Backup` lets you pull the newest automatic snapshot from the current browser.
 
 ## Spreadsheet Import
