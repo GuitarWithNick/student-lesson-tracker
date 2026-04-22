@@ -1,8 +1,10 @@
 const STORAGE_KEY = "student-practice-tracker-v1";
-const APP_VERSION = "2026.04.14.2";
+const APP_VERSION = "2026.04.22.1";
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday"];
 const PUSH_DEBOUNCE_MS = 500;
 const POLL_INTERVAL_MS = 15000;
+const VERSION_CHECK_INTERVAL_MS = 60000;
+const VERSION_MANIFEST_PATH = "version.json";
 const BACKUP_DB_NAME = "student-lesson-tracker-backups";
 const BACKUP_DB_VERSION = 1;
 const BACKUP_STORE_NAME = "snapshots";
@@ -545,6 +547,7 @@ let syncStatus = LOCAL_ONLY_SYNC_STATUS;
 let syncInFlight = false;
 let pushTimer = null;
 let pollTimer = null;
+let versionCheckTimer = null;
 let focusedStudentId = "";
 let selectedGlobalCategory = "";
 let selectedTechniqueSubcategory = "";
@@ -554,6 +557,8 @@ let studentMaterialSearchTerms = {};
 let activeWorkspaceTab = "students";
 let backupSummary = "Automatic backup snapshots are stored locally in this browser.";
 let backupDbPromise = null;
+let hostedRefreshRequired = false;
+let latestHostedVersion = APP_VERSION;
 
 const dom = {
   addStudentForm: document.getElementById("addStudentForm"),
@@ -621,6 +626,13 @@ function bootstrap() {
     pollTimer = window.setInterval(() => {
       void pullRemoteAndMerge({ silent: true });
     }, POLL_INTERVAL_MS);
+  }
+
+  if (isHostedRuntime()) {
+    void checkForDeployedVersion({ silent: true });
+    versionCheckTimer = window.setInterval(() => {
+      void checkForDeployedVersion({ silent: true });
+    }, VERSION_CHECK_INTERVAL_MS);
   }
 }
 
@@ -1603,9 +1615,11 @@ function renderAppMeta() {
   }
 
   if (dom.appRuntime instanceof HTMLElement) {
-    const isHosted =
-      window.location.protocol.startsWith("http") && window.location.hostname.length > 0;
-    dom.appRuntime.textContent = isHosted ? "Hosted Site" : "Local Preview";
+    if (isHostedRuntime()) {
+      dom.appRuntime.textContent = hostedRefreshRequired ? "Refresh Required" : "Hosted Site";
+    } else {
+      dom.appRuntime.textContent = "Local Preview";
+    }
   }
 }
 
@@ -1967,8 +1981,12 @@ function renderSyncStatus() {
   }
 
   dom.syncStatus.textContent = syncStatus;
-  dom.syncNowBtn.disabled = !isSyncConfigured() || syncInFlight;
-  dom.syncNowBtn.textContent = syncInFlight ? "Syncing..." : "Sync Now";
+  dom.syncNowBtn.disabled = !isSyncConfigured() || syncInFlight || hostedRefreshRequired;
+  dom.syncNowBtn.textContent = hostedRefreshRequired
+    ? "Refresh Required"
+    : syncInFlight
+      ? "Syncing..."
+      : "Sync Now";
 }
 
 function renderBackupSummary() {
@@ -4606,6 +4624,80 @@ function timestampMs(value) {
   return Number.isFinite(parsedMs) ? parsedMs : 0;
 }
 
+function isHostedRuntime() {
+  return window.location.protocol.startsWith("http") && window.location.hostname.length > 0;
+}
+
+function pauseCloudSyncForRefresh(remoteVersion) {
+  hostedRefreshRequired = true;
+  latestHostedVersion = normalizeText(remoteVersion) || APP_VERSION;
+
+  if (pushTimer) {
+    clearTimeout(pushTimer);
+    pushTimer = null;
+  }
+
+  syncStatus =
+    `Cloud sync paused: refresh required to load version ${latestHostedVersion}. ` +
+    `This tab is still on ${APP_VERSION}, so syncing is blocked to protect your notes and roster.`;
+  render();
+}
+
+async function fetchDeployedVersion() {
+  if (!isHostedRuntime()) {
+    return "";
+  }
+
+  const versionUrl = new URL(VERSION_MANIFEST_PATH, window.location.href);
+  versionUrl.searchParams.set("ts", Date.now().toString());
+  const response = await fetch(versionUrl.toString(), {
+    method: "GET",
+    cache: "no-store",
+    headers: {
+      Accept: "application/json"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`version check failed (${response.status})`);
+  }
+
+  const payload = await response.json();
+  return normalizeText(payload?.version);
+}
+
+async function checkForDeployedVersion({ silent = false } = {}) {
+  if (!isHostedRuntime()) {
+    return false;
+  }
+
+  if (hostedRefreshRequired) {
+    return true;
+  }
+
+  try {
+    const deployedVersion = await fetchDeployedVersion();
+    if (!deployedVersion) {
+      return false;
+    }
+
+    latestHostedVersion = deployedVersion;
+    if (deployedVersion !== APP_VERSION) {
+      pauseCloudSyncForRefresh(deployedVersion);
+      return true;
+    }
+  } catch (error) {
+    if (!silent && !syncInFlight) {
+      syncStatus = `Cloud sync warning: ${
+        error instanceof Error ? error.message : "could not verify the deployed app version"
+      }`;
+      renderSyncStatus();
+    }
+  }
+
+  return false;
+}
+
 function studentMatchKeys(student) {
   if (!student || typeof student !== "object") {
     return [];
@@ -4926,6 +5018,9 @@ function formatSyncTime(value) {
 }
 
 async function initializeSync() {
+  if (await checkForDeployedVersion()) {
+    return;
+  }
   await pullRemoteAndMerge({ forcePushIfMissing: true });
   if (maybeApplyAllStarterData()) {
     persistAndRender();
@@ -4936,11 +5031,21 @@ async function syncNow() {
   if (!isSyncConfigured()) {
     return;
   }
+  if (await checkForDeployedVersion()) {
+    return;
+  }
   await pullRemoteAndMerge({ forcePushIfMissing: true, manual: true });
 }
 
 function scheduleCloudPush() {
   if (!isSyncConfigured()) {
+    return;
+  }
+  if (hostedRefreshRequired) {
+    syncStatus =
+      `Cloud sync paused: refresh required to load version ${latestHostedVersion}. ` +
+      "This tab will keep local changes here until you reload.";
+    renderSyncStatus();
     return;
   }
   if (pushTimer) {
@@ -4953,6 +5058,9 @@ function scheduleCloudPush() {
 
 async function pullRemoteAndMerge({ forcePushIfMissing = false, manual = false, silent = false } = {}) {
   if (!isSyncConfigured()) {
+    return;
+  }
+  if (await checkForDeployedVersion({ silent })) {
     return;
   }
   if (syncInFlight) {
@@ -5022,7 +5130,7 @@ async function pullRemoteAndMerge({ forcePushIfMissing = false, manual = false, 
         return;
       }
 
-      const mergedRemote = mergeStatePreservingLocalStudentFields(state, remote.data);
+      const mergedRemote = mergeStateSafelyForCloudWrite(remote.data, state);
       state = mergedRemote.state;
 
       if (mergedRemote.changed) {
@@ -5090,6 +5198,9 @@ async function pushCurrentStateToCloud() {
   if (!isSyncConfigured()) {
     return;
   }
+  if (await checkForDeployedVersion()) {
+    return;
+  }
   if (syncInFlight) {
     return;
   }
@@ -5148,6 +5259,14 @@ async function fetchRemoteEnvelope() {
 }
 
 async function upsertRemoteEnvelope(nextState, nextUpdatedAt, backupReason = "cloud-write") {
+  if (await checkForDeployedVersion({ silent: true })) {
+    return {
+      blocked: true,
+      updatedAt: stateUpdatedAt,
+      state
+    };
+  }
+
   const guardResult = await protectAgainstEmptyWrite(nextState);
   if (guardResult.blocked) {
     return guardResult;
