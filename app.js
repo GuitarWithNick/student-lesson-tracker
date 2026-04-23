@@ -1,7 +1,8 @@
 const STORAGE_KEY = "student-practice-tracker-v1";
-const APP_VERSION = "2026.04.22.2";
+const APP_VERSION = "2026.04.23.1";
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday"];
-const PUSH_DEBOUNCE_MS = 500;
+const PUSH_DEBOUNCE_MS = 1000;
+const NOTES_PUSH_DEBOUNCE_MS = 5000;
 const POLL_INTERVAL_MS = 15000;
 const VERSION_CHECK_INTERVAL_MS = 60000;
 const VERSION_MANIFEST_PATH = "version.json";
@@ -1600,13 +1601,14 @@ function persistAndRender() {
   scheduleCloudPush();
 }
 
-function persistStateOnly() {
+function persistStateOnly({ pushDelayMs = PUSH_DEBOUNCE_MS } = {}) {
   stateUpdatedAt = new Date().toISOString();
   persistLocalEnvelope();
-  scheduleCloudPush();
+  scheduleCloudPush({ delayMs: pushDelayMs });
 }
 
 function render() {
+  const activeNotesField = captureActiveNotesField();
   renderAppMeta();
   renderWorkspaceTabs();
   renderCategoryHelpers();
@@ -1614,6 +1616,44 @@ function render() {
   renderStudentsBoard();
   renderSyncStatus();
   renderBackupSummary();
+  restoreActiveNotesField(activeNotesField);
+}
+
+function captureActiveNotesField() {
+  const activeElement = document.activeElement;
+  if (!(activeElement instanceof HTMLTextAreaElement)) {
+    return null;
+  }
+  if (activeElement.dataset.action !== "update-student-notes") {
+    return null;
+  }
+
+  return {
+    studentId: activeElement.dataset.studentId ?? "",
+    selectionStart: activeElement.selectionStart ?? activeElement.value.length,
+    selectionEnd: activeElement.selectionEnd ?? activeElement.value.length
+  };
+}
+
+function restoreActiveNotesField(activeNotesField) {
+  if (!activeNotesField?.studentId) {
+    return;
+  }
+
+  requestAnimationFrame(() => {
+    const nextField = document.querySelector(
+      `[data-action="update-student-notes"][data-student-id="${activeNotesField.studentId}"]`
+    );
+    if (!(nextField instanceof HTMLTextAreaElement)) {
+      return;
+    }
+
+    nextField.focus({ preventScroll: true });
+    const maxPosition = nextField.value.length;
+    const selectionStart = Math.min(activeNotesField.selectionStart, maxPosition);
+    const selectionEnd = Math.min(activeNotesField.selectionEnd, maxPosition);
+    nextField.setSelectionRange(selectionStart, selectionEnd);
+  });
 }
 
 function renderAppMeta() {
@@ -3330,7 +3370,7 @@ function handleInput(event) {
     }
 
     student.notes = nextNotes;
-    persistStateOnly();
+    persistStateOnly({ pushDelayMs: NOTES_PUSH_DEBOUNCE_MS });
     return;
   }
 
@@ -5077,7 +5117,7 @@ async function syncNow() {
   await pullRemoteAndMerge({ forcePushIfMissing: true, manual: true });
 }
 
-function scheduleCloudPush() {
+function scheduleCloudPush({ delayMs = PUSH_DEBOUNCE_MS } = {}) {
   if (!isSyncConfigured()) {
     return;
   }
@@ -5100,7 +5140,7 @@ function scheduleCloudPush() {
   }
   pushTimer = setTimeout(() => {
     void pushCurrentStateToCloud();
-  }, PUSH_DEBOUNCE_MS);
+  }, delayMs);
 }
 
 async function pullRemoteAndMerge({ forcePushIfMissing = false, manual = false, silent = false } = {}) {
