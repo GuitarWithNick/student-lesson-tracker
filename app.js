@@ -1,9 +1,9 @@
 const STORAGE_KEY = "student-practice-tracker-v1";
-const APP_VERSION = "2026.04.23.1";
+const APP_VERSION = "2026.04.24.1";
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday"];
 const PUSH_DEBOUNCE_MS = 1000;
 const NOTES_PUSH_DEBOUNCE_MS = 5000;
-const POLL_INTERVAL_MS = 15000;
+const POLL_INTERVAL_MS = 300000;
 const VERSION_CHECK_INTERVAL_MS = 60000;
 const VERSION_MANIFEST_PATH = "version.json";
 const BACKUP_DB_NAME = "student-lesson-tracker-backups";
@@ -41,8 +41,8 @@ const UNCATEGORIZED_LABEL = "Uncategorized";
 const SONGS_CATEGORY = "songs";
 const SHORT_TERM_GOAL = "short";
 const LONG_TERM_GOAL = "long";
-const MONDAY_STARTER_STUDENTS = ["Mary", "Linda", "Xavier", "Chris", "Matt", "Mike"];
-const MONDAY_STARTER_STUDENTS_MIGRATION_KEY = `${STORAGE_KEY}-starter-students-monday-v2`;
+const MONDAY_STARTER_STUDENTS = ["Mary", "Linda", "Xavier", "Chris", "Matt", "Mike", "Lois"];
+const MONDAY_STARTER_STUDENTS_MIGRATION_KEY = `${STORAGE_KEY}-starter-students-monday-v3`;
 const TUESDAY_STARTER_STUDENTS = [
   "Kalye",
   "Alex",
@@ -1630,6 +1630,7 @@ function captureActiveNotesField() {
 
   return {
     studentId: activeElement.dataset.studentId ?? "",
+    value: activeElement.value,
     selectionStart: activeElement.selectionStart ?? activeElement.value.length,
     selectionEnd: activeElement.selectionEnd ?? activeElement.value.length
   };
@@ -1640,6 +1641,13 @@ function restoreActiveNotesField(activeNotesField) {
     return;
   }
 
+  if (activeNotesField.value != null) {
+    const student = getStudent(activeNotesField.studentId);
+    if (student) {
+      student.notes = sanitizeNotesText(activeNotesField.value);
+    }
+  }
+
   requestAnimationFrame(() => {
     const nextField = document.querySelector(
       `[data-action="update-student-notes"][data-student-id="${activeNotesField.studentId}"]`
@@ -1648,6 +1656,9 @@ function restoreActiveNotesField(activeNotesField) {
       return;
     }
 
+    if (activeNotesField.value != null) {
+      nextField.value = activeNotesField.value;
+    }
     nextField.focus({ preventScroll: true });
     const maxPosition = nextField.value.length;
     const selectionStart = Math.min(activeNotesField.selectionStart, maxPosition);
