@@ -1,8 +1,7 @@
 const STORAGE_KEY = "student-practice-tracker-v1";
-const APP_VERSION = "2026.04.24.1";
+const APP_VERSION = "2026.04.28.1";
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday"];
 const PUSH_DEBOUNCE_MS = 1000;
-const NOTES_PUSH_DEBOUNCE_MS = 5000;
 const POLL_INTERVAL_MS = 300000;
 const VERSION_CHECK_INTERVAL_MS = 60000;
 const VERSION_MANIFEST_PATH = "version.json";
@@ -1601,10 +1600,12 @@ function persistAndRender() {
   scheduleCloudPush();
 }
 
-function persistStateOnly({ pushDelayMs = PUSH_DEBOUNCE_MS } = {}) {
+function persistStateOnly({ pushDelayMs = PUSH_DEBOUNCE_MS, skipCloudPush = false } = {}) {
   stateUpdatedAt = new Date().toISOString();
   persistLocalEnvelope();
-  scheduleCloudPush({ delayMs: pushDelayMs });
+  if (!skipCloudPush) {
+    scheduleCloudPush({ delayMs: pushDelayMs });
+  }
 }
 
 function render() {
@@ -2514,7 +2515,7 @@ function renderStudentCard(student, focusedView = false) {
     <section class="sub-card notes-card">
       <div class="section-head">
         <h4>Notes</h4>
-        <p class="muted notes-hint">Autosaves while you type.</p>
+        <p class="muted notes-hint">Saves locally while you type. Syncs after you leave the field.</p>
       </div>
       <textarea
         class="notes-field"
@@ -3316,6 +3317,11 @@ function handleChange(event) {
     return;
   }
 
+  if (action === "update-student-notes" && target instanceof HTMLTextAreaElement) {
+    scheduleCloudPush({ delayMs: PUSH_DEBOUNCE_MS });
+    return;
+  }
+
   if (action === "update-student-name" && target instanceof HTMLInputElement) {
     const nextName = normalizeText(target.value);
     student.name = nextName || student.name;
@@ -3381,7 +3387,7 @@ function handleInput(event) {
     }
 
     student.notes = nextNotes;
-    persistStateOnly({ pushDelayMs: NOTES_PUSH_DEBOUNCE_MS });
+    persistStateOnly({ skipCloudPush: true });
     return;
   }
 
