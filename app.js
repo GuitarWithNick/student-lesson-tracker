@@ -1,8 +1,8 @@
 const STORAGE_KEY = "student-practice-tracker-v1";
-const APP_VERSION = "2026.04.28.1";
+const APP_VERSION = "2026.04.30.1";
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday"];
 const PUSH_DEBOUNCE_MS = 1000;
-const POLL_INTERVAL_MS = 300000;
+const POLL_INTERVAL_MS = 900000;
 const VERSION_CHECK_INTERVAL_MS = 60000;
 const VERSION_MANIFEST_PATH = "version.json";
 const BACKUP_DB_NAME = "student-lesson-tracker-backups";
