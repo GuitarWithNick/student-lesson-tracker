@@ -1,7 +1,7 @@
 const STORAGE_KEY = "student-practice-tracker-v1";
-const APP_VERSION = "2026.04.30.1";
+const APP_VERSION = "2026.04.30.2";
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday"];
-const PUSH_DEBOUNCE_MS = 1000;
+const PUSH_DEBOUNCE_MS = 900000;
 const POLL_INTERVAL_MS = 900000;
 const VERSION_CHECK_INTERVAL_MS = 60000;
 const VERSION_MANIFEST_PATH = "version.json";
@@ -2515,7 +2515,7 @@ function renderStudentCard(student, focusedView = false) {
     <section class="sub-card notes-card">
       <div class="section-head">
         <h4>Notes</h4>
-        <p class="muted notes-hint">Saves locally while you type. Syncs after you leave the field.</p>
+        <p class="muted notes-hint">Saves locally while you type. Cloud sync happens later or when you click Sync Now.</p>
       </div>
       <textarea
         class="notes-field"
