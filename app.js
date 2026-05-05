@@ -1,5 +1,5 @@
 const STORAGE_KEY = "student-practice-tracker-v1";
-const APP_VERSION = "2026.04.30.2";
+const APP_VERSION = "2026.05.05.1";
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday"];
 const PUSH_DEBOUNCE_MS = 900000;
 const POLL_INTERVAL_MS = 900000;
@@ -955,6 +955,7 @@ function sanitizeStudents(value, validGlobalIds) {
     const goals = sanitizeStudentGoals(entry);
     const songs = sanitizeSimpleList(entry.songs, "song");
     const riffs = sanitizeSimpleList(entry.riffs, "riff");
+    const nextLesson = sanitizeNextLessonText(entry.nextLesson ?? entry.next_lesson);
     const notes = sanitizeNotesText(entry.notes ?? entry.note);
     const archived = Boolean(entry.archived);
     const archivedAt = sanitizeArchivedAt(entry.archivedAt ?? entry.archived_at);
@@ -968,6 +969,7 @@ function sanitizeStudents(value, validGlobalIds) {
       goals,
       songs,
       riffs,
+      nextLesson,
       notes,
       archived,
       archivedAt,
@@ -1081,6 +1083,18 @@ function sanitizeNotesText(value) {
   }
 
   return value.replace(/\r\n?/g, "\n").slice(0, 4000);
+}
+
+function sanitizeNextLessonText(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  return value
+    .replace(/\r\n?/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
 }
 
 function sanitizeArchivedAt(value) {
@@ -1559,6 +1573,7 @@ function maybeApplyStarterStudents({ students, migrationKey }) {
       goals: [],
       songs: [],
       riffs: [],
+      nextLesson: "",
       notes: "",
       archived: false,
       archivedAt: "",
@@ -1609,7 +1624,7 @@ function persistStateOnly({ pushDelayMs = PUSH_DEBOUNCE_MS, skipCloudPush = fals
 }
 
 function render() {
-  const activeNotesField = captureActiveNotesField();
+  const activeStudentTextField = captureActiveStudentTextField();
   renderAppMeta();
   renderWorkspaceTabs();
   renderCategoryHelpers();
@@ -1617,19 +1632,21 @@ function render() {
   renderStudentsBoard();
   renderSyncStatus();
   renderBackupSummary();
-  restoreActiveNotesField(activeNotesField);
+  restoreActiveStudentTextField(activeStudentTextField);
 }
 
-function captureActiveNotesField() {
+function captureActiveStudentTextField() {
   const activeElement = document.activeElement;
-  if (!(activeElement instanceof HTMLTextAreaElement)) {
+  if (!(activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement)) {
     return null;
   }
-  if (activeElement.dataset.action !== "update-student-notes") {
+  const action = activeElement.dataset.action;
+  if (action !== "update-student-notes" && action !== "update-student-next-lesson") {
     return null;
   }
 
   return {
+    action,
     studentId: activeElement.dataset.studentId ?? "",
     value: activeElement.value,
     selectionStart: activeElement.selectionStart ?? activeElement.value.length,
@@ -1637,33 +1654,37 @@ function captureActiveNotesField() {
   };
 }
 
-function restoreActiveNotesField(activeNotesField) {
-  if (!activeNotesField?.studentId) {
+function restoreActiveStudentTextField(activeStudentTextField) {
+  if (!activeStudentTextField?.studentId || !activeStudentTextField?.action) {
     return;
   }
 
-  if (activeNotesField.value != null) {
-    const student = getStudent(activeNotesField.studentId);
+  if (activeStudentTextField.value != null) {
+    const student = getStudent(activeStudentTextField.studentId);
     if (student) {
-      student.notes = sanitizeNotesText(activeNotesField.value);
+      if (activeStudentTextField.action === "update-student-notes") {
+        student.notes = sanitizeNotesText(activeStudentTextField.value);
+      } else if (activeStudentTextField.action === "update-student-next-lesson") {
+        student.nextLesson = sanitizeNextLessonText(activeStudentTextField.value);
+      }
     }
   }
 
   requestAnimationFrame(() => {
     const nextField = document.querySelector(
-      `[data-action="update-student-notes"][data-student-id="${activeNotesField.studentId}"]`
+      `[data-action="${activeStudentTextField.action}"][data-student-id="${activeStudentTextField.studentId}"]`
     );
-    if (!(nextField instanceof HTMLTextAreaElement)) {
+    if (!(nextField instanceof HTMLInputElement || nextField instanceof HTMLTextAreaElement)) {
       return;
     }
 
-    if (activeNotesField.value != null) {
-      nextField.value = activeNotesField.value;
+    if (activeStudentTextField.value != null) {
+      nextField.value = activeStudentTextField.value;
     }
     nextField.focus({ preventScroll: true });
     const maxPosition = nextField.value.length;
-    const selectionStart = Math.min(activeNotesField.selectionStart, maxPosition);
-    const selectionEnd = Math.min(activeNotesField.selectionEnd, maxPosition);
+    const selectionStart = Math.min(activeStudentTextField.selectionStart, maxPosition);
+    const selectionEnd = Math.min(activeStudentTextField.selectionEnd, maxPosition);
     nextField.setSelectionRange(selectionStart, selectionEnd);
   });
 }
@@ -2513,6 +2534,18 @@ function renderStudentCard(student, focusedView = false) {
   `;
   const notesSection = `
     <section class="sub-card notes-card">
+      <div class="section-head next-lesson-head">
+        <h4>Next Lesson</h4>
+      </div>
+      <input
+        type="text"
+        class="next-lesson-field"
+        data-action="update-student-next-lesson"
+        data-student-id="${student.id}"
+        maxlength="200"
+        placeholder="Main focus for next lesson..."
+        value="${escapeHtml(student.nextLesson ?? "")}"
+      />
       <div class="section-head">
         <h4>Notes</h4>
         <p class="muted notes-hint">Saves locally while you type. Cloud sync happens later or when you click Sync Now.</p>
@@ -2623,6 +2656,7 @@ function handleSubmit(event) {
       goals: [],
       songs: [],
       riffs: [],
+      nextLesson: "",
       notes: "",
       archived: false,
       archivedAt: "",
@@ -3322,6 +3356,11 @@ function handleChange(event) {
     return;
   }
 
+  if (action === "update-student-next-lesson" && target instanceof HTMLInputElement) {
+    scheduleCloudPush({ delayMs: PUSH_DEBOUNCE_MS });
+    return;
+  }
+
   if (action === "update-student-name" && target instanceof HTMLInputElement) {
     const nextName = normalizeText(target.value);
     student.name = nextName || student.name;
@@ -3370,6 +3409,27 @@ function handleInput(event) {
   }
 
   const action = target.dataset.action;
+  if (action === "update-student-next-lesson" && target instanceof HTMLInputElement) {
+    const studentId = target.dataset.studentId;
+    if (!studentId) {
+      return;
+    }
+
+    const student = getStudent(studentId);
+    if (!student) {
+      return;
+    }
+
+    const nextLesson = sanitizeNextLessonText(target.value);
+    if (student.nextLesson === nextLesson) {
+      return;
+    }
+
+    student.nextLesson = nextLesson;
+    persistStateOnly({ skipCloudPush: true });
+    return;
+  }
+
   if (action === "update-student-notes" && target instanceof HTMLTextAreaElement) {
     const studentId = target.dataset.studentId;
     if (!studentId) {
@@ -4469,6 +4529,7 @@ function ensureImportedStudent(studentName, dayHint, result) {
     goals: [],
     songs: [],
     riffs: [],
+    nextLesson: "",
     notes: "",
     archived: false,
     archivedAt: "",
@@ -4895,6 +4956,14 @@ function mergeStatePreservingLocalStudentFields(localState, incomingState) {
     }
 
     let nextStudent = incomingStudent;
+
+    if (!incomingStudent.nextLesson && localStudent.nextLesson) {
+      nextStudent = {
+        ...nextStudent,
+        nextLesson: localStudent.nextLesson
+      };
+      changed = true;
+    }
 
     if (!incomingStudent.notes && localStudent.notes) {
       nextStudent = {

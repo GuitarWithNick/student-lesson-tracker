@@ -956,6 +956,14 @@ button:focus-visible {
   white-space: nowrap;
 }
 
+.next-lesson-head {
+  margin-bottom: -0.2rem;
+}
+
+.next-lesson-field {
+  width: 100%;
+}
+
 .notes-field {
   width: 100%;
   min-height: 150px;
